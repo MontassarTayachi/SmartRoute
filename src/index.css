@@ -1,2 +1,25 @@
 @import './styles/variables.css';
 @import './styles/theme.css';
+.vehicle-type-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vehicle-type-icon {
+  width: 45px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.select-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.select-with-icon select {
+  flex: 1;
+}

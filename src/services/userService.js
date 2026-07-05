@@ -43,6 +43,18 @@ export const createUser = async (payload) =>
 			}),
 		),
 	);
+export const createDriverAccount = async (payload) =>
+	normalizeUser(
+		unwrapApiData(
+			await api.post('/users/driver-account', {
+				driver_id: payload.driverId,
+				name: payload.name,
+				email: payload.email,
+				password: payload.password,
+				is_active: payload.isActive ?? true,
+			}),
+		),
+	);
 export const updateUser = async (id, payload) =>
 	normalizeUser(
 		unwrapApiData(
@@ -52,4 +64,5 @@ export const updateUser = async (id, payload) =>
 			}),
 		),
 	);
-export const deleteUser = async (id) => unwrapApiData(await api.delete(`/users/${id}`));
+export const deleteUser = async (id) => 
+	unwrapApiData(await api.delete(`/users/${id}`));

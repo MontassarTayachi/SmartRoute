@@ -36,6 +36,8 @@ const normalizeDriverCollection = (payload) => {
 
 export const getDrivers = async (params = {}) =>
   normalizeDriverCollection(unwrapApiData(await api.get('/drivers', { params })));
+export const getDriversWithoutUserAccount = async (params = {}) =>
+  normalizeDriverCollection(unwrapApiData(await api.get('/drivers/without-user-account', { params })));
 export const createDriver = async (payload) =>
   normalizeDriver(
     unwrapApiData(

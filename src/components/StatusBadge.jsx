@@ -13,7 +13,7 @@ const statusToClass = (status) => {
     return 'badge-warning';
   }
 
-  if (['INACTIVE', 'ERROR', 'FAILED', 'CANCELLED', 'ANNULE', 'FALSE'].includes(value)) {
+  if (['OUT_OF_SERVICE', 'ERROR', 'FAILED', 'CANCELLED', 'ANNULE', 'FALSE'].includes(value)) {
     return 'badge-danger';
   }
 
