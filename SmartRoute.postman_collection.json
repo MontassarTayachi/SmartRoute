@@ -1,0 +1,417 @@
+{
+  "info": {
+    "name": "SmartRoute API",
+    "description": "Collection Postman pour tester les endpoints SmartRoute.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{email}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login success', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.environment.set('access_token', jsonData.access_token);",
+                  "}",
+                  "if (jsonData.refresh_token) {",
+                  "    pm.environment.set('refresh_token', jsonData.refresh_token);",
+                  "}",
+                  "if (jsonData.user && jsonData.user.id) {",
+                  "    pm.environment.set('user_id', jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Refresh token success', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.environment.set('access_token', jsonData.access_token);",
+                  "}",
+                  "if (jsonData.refresh_token) {",
+                  "    pm.environment.set('refresh_token', jsonData.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users?page=1&size=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "size", "value": "10"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Marie Dupont\",\n  \"email\": \"marie.dupont@example.com\",\n  \"password\": \"P@ssword123\",\n  \"role\": \"dispatcher\",\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create user success', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.environment.set('created_user_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{created_user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{created_user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Marie Legrand\",\n  \"role\": \"dispatcher\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{created_user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{created_user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{created_user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{created_user_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "item": [
+        {
+          "name": "List Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vehicles?page=1&size=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vehicles"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "size", "value": "10"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Vehicle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registration\": \"SR-12345\",\n  \"vehicle_type\": \"truck\",\n  \"capacity_kg\": 2000,\n  \"status\": \"available\",\n  \"avg_fuel_consumption\": 12.5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vehicles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vehicles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create vehicle success', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.environment.set('created_vehicle_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Vehicle",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vehicles/{{created_vehicle_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vehicles", "{{created_vehicle_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Vehicle",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"maintenance\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/vehicles/{{created_vehicle_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vehicles", "{{created_vehicle_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Vehicle",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/vehicles/{{created_vehicle_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "vehicles", "{{created_vehicle_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Drivers",
+      "item": [
+        {
+          "name": "List Drivers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/drivers?page=1&size=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "drivers"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "size", "value": "10"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Driver",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Alex Martin\",\n  \"phone\": \"+33123456789\",\n  \"license_number\": \"DRIV-98765\",\n  \"availability\": \"available\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/drivers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "drivers"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create driver success', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.environment.set('created_driver_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Driver",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{access_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"availability\": \"unavailable\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/drivers/{{created_driver_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "drivers", "{{created_driver_id}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
