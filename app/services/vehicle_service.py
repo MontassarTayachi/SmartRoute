@@ -51,6 +51,53 @@ async def get_vehicle_by_id(db: AsyncIOMotorDatabase, vehicle_id: str) -> dict |
     return _format_vehicle(document) if document else None
 
 
+def _format_vehicle_dispo(doc: dict, vehicle_list_doc: dict | None = None) -> dict:
+    vehicle_list_id = doc.get("vehicle_list_id")
+    return {
+        "_id": str(doc["_id"]),
+        "registration": doc.get("registration"),
+        "vehicle_list_id": str(vehicle_list_id) if vehicle_list_id else None,
+        "capacity_kg": doc.get("capacity_kg"),
+        "status": doc.get("status"),
+        "avg_fuel_consumption": doc.get("avg_fuel_consumption"),
+        "created_at": doc.get("created_at"),
+        "nom": vehicle_list_doc.get("nom") if vehicle_list_doc else None,
+        "image_url": vehicle_list_doc.get("image_url") if vehicle_list_doc else None,
+    }
+
+
+async def list_unassigned_vehicles(
+    db: AsyncIOMotorDatabase,
+    page: int = 1,
+    size: int = 10,
+) -> dict:
+    assigned_vehicle_ids = [
+        vehicle_id
+        for vehicle_id in await db["drivers"].distinct("assigned_vehicle_id")
+        if vehicle_id is not None
+    ]
+    query = {"_id": {"$nin": assigned_vehicle_ids}}
+    skip = max(page - 1, 0) * size
+
+    cursor = db["vehicles"].find(query).skip(skip).limit(size)
+    vehicles = await cursor.to_list(length=size)
+
+    vehicle_list_ids = list(
+        {vehicle["vehicle_list_id"] for vehicle in vehicles if vehicle.get("vehicle_list_id")}
+    )
+    vehicle_lists: dict = {}
+    if vehicle_list_ids:
+        async for doc in db["vehicleListe"].find({"_id": {"$in": vehicle_list_ids}}):
+            vehicle_lists[doc["_id"]] = doc
+
+    items = [
+        _format_vehicle_dispo(vehicle, vehicle_lists.get(vehicle.get("vehicle_list_id")))
+        for vehicle in vehicles
+    ]
+    total = await db["vehicles"].count_documents(query)
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
 async def list_vehicles(db: AsyncIOMotorDatabase, page: int = 1, size: int = 10, status: str | None = None, vehicle_list_id: str | None = None) -> dict:
     skip = max(page - 1, 0) * size
     query = {}

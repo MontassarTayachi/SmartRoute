@@ -3,7 +3,14 @@ from fastapi.responses import JSONResponse
 
 from app.dependencies import get_current_user
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
-from app.services.vehicle_service import create_vehicle, delete_vehicle, get_vehicle_by_id, list_vehicles, update_vehicle
+from app.services.vehicle_service import (
+    create_vehicle,
+    delete_vehicle,
+    get_vehicle_by_id,
+    list_unassigned_vehicles,
+    list_vehicles,
+    update_vehicle,
+)
 
 router = APIRouter(prefix="/api/v1/vehicles", tags=["vehicles"])
 
@@ -25,6 +32,16 @@ async def get_vehicles(
 async def create_vehicle_route(payload: VehicleCreate, request: Request = None, current_user: dict = Depends(get_current_user)):
     db = request.app.state.mongodb
     return await create_vehicle(db, payload)
+
+
+@router.get("/dispo", response_model=dict)
+async def get_available_vehicles(
+    page: int = 1,
+    size: int = 10,
+    request: Request = None,
+):
+    db = request.app.state.mongodb
+    return await list_unassigned_vehicles(db, page=page, size=size)
 
 
 @router.get("/{vehicle_id}", response_model=VehicleResponse)

@@ -102,23 +102,43 @@ def _deliveries_validator() -> dict:
     return {
         "$jsonSchema": {
             "bsonType": "object",
-            "required": ["reference", "customer", "pickup_address", "dropoff_address", "status", "priority", "weight_kg", "created_by", "scheduled_at"],
+            "required": [
+                "reference",
+                "customer",
+                "pickup_address",
+                "pickup_address_lat",
+                "pickup_address_lng",
+                "dropoff_address",
+                "dropoff_address_lat",
+                "dropoff_address_lng",
+                "status",
+                "priority",
+                "weight_kg",
+                "scheduled_at",
+                "created_at",
+                "updated_at",
+            ],
             "properties": {
                 "reference": {"bsonType": "string", "description": "Référence unique de la livraison."},
                 "customer": {"bsonType": "string", "description": "Client destinataire de la livraison."},
-                "pickup_address": {"bsonType": "string", "description": "Adresse de prise en charge."},
-                "dropoff_address": {"bsonType": "string", "description": "Adresse de livraison."},
+                "pickup_address": {"bsonType": "string", "description": "Adresse textuelle de prise en charge."},
+                "pickup_address_lat": {"bsonType": ["double", "int"], "minimum": -90, "maximum": 90, "description": "Latitude de prise en charge."},
+                "pickup_address_lng": {"bsonType": ["double", "int"], "minimum": -180, "maximum": 180, "description": "Longitude de prise en charge."},
+                "dropoff_address": {"bsonType": "string", "description": "Adresse textuelle de livraison."},
+                "dropoff_address_lat": {"bsonType": ["double", "int"], "minimum": -90, "maximum": 90, "description": "Latitude de livraison."},
+                "dropoff_address_lng": {"bsonType": ["double", "int"], "minimum": -180, "maximum": 180, "description": "Longitude de livraison."},
                 "status": {
-                    "enum": ["pending", "assigned", "in_transit", "delivered", "cancelled"],
+                    "enum": ["pending", "assigned", "in_progress", "delivered", "cancelled"],
                     "description": "Statut de la livraison.",
                 },
-                "priority": {"bsonType": "int", "minimum": 0, "description": "Priorité de la livraison."},
+                "priority": {"bsonType": "string", "description": "Priorité de la livraison."},
                 "weight_kg": {"bsonType": ["double", "int"], "minimum": 0, "description": "Poids total de la livraison en kg."},
                 "vehicle_id": {"bsonType": ["objectId", "null"], "description": "Référence du véhicule responsable."},
                 "driver_id": {"bsonType": ["objectId", "null"], "description": "Référence du conducteur responsable."},
-                "created_by": {"bsonType": "objectId", "description": "Référence de l'utilisateur créateur."},
                 "scheduled_at": {"bsonType": "date", "description": "Date/heure prévue de départ."},
                 "delivered_at": {"bsonType": ["date", "null"], "description": "Date/heure de livraison effective."},
+                "created_at": {"bsonType": "date", "description": "Date de création de la livraison."},
+                "updated_at": {"bsonType": "date", "description": "Date de dernière modification de la livraison."},
             },
         }
     }
@@ -136,6 +156,39 @@ def _locations_validator() -> dict:
                 "speed_kmh": {"bsonType": ["double", "int"], "minimum": 0, "description": "Vitesse en km/h."},
                 "heading": {"bsonType": ["double", "int"], "minimum": 0, "maximum": 360, "description": "Cap du véhicule en degrés."},
                 "timestamp": {"bsonType": "date", "description": "Horodatage de la position."},
+            },
+        }
+    }
+
+
+def _vehicle_latest_locations_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["vehicle_id", "latitude", "longitude", "timestamp", "created_at", "updated_at"],
+            "properties": {
+                "vehicle_id": {"bsonType": "objectId", "description": "Référence du véhicule."},
+                "latitude": {"bsonType": ["double", "int"], "minimum": -90, "maximum": 90, "description": "Latitude GPS."},
+                "longitude": {"bsonType": ["double", "int"], "minimum": -180, "maximum": 180, "description": "Longitude GPS."},
+                "timestamp": {"bsonType": "date", "description": "Horodatage envoyé par le véhicule."},
+                "created_at": {"bsonType": "date", "description": "Date de création de l'entrée latest."},
+                "updated_at": {"bsonType": "date", "description": "Date de mise à jour de l'entrée latest."},
+            },
+        }
+    }
+
+
+def _vehicle_location_history_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["vehicle_id", "latitude", "longitude", "timestamp", "created_at"],
+            "properties": {
+                "vehicle_id": {"bsonType": "objectId", "description": "Référence du véhicule."},
+                "latitude": {"bsonType": ["double", "int"], "minimum": -90, "maximum": 90, "description": "Latitude GPS."},
+                "longitude": {"bsonType": ["double", "int"], "minimum": -180, "maximum": 180, "description": "Longitude GPS."},
+                "timestamp": {"bsonType": "date", "description": "Horodatage envoyé par le véhicule."},
+                "created_at": {"bsonType": "date", "description": "Date d'insertion dans l'historique."},
             },
         }
     }
@@ -245,6 +298,21 @@ def initialize_database(mongo_uri: str, db_name: str):
             _locations_validator(),
             [
                 ([("vehicle_id", ASCENDING), ("timestamp", ASCENDING)], {"name": "idx_vehicle_timestamp"}),
+            ],
+        ),
+        (
+            "vehicle_latest_locations",
+            _vehicle_latest_locations_validator(),
+            [
+                ([("vehicle_id", ASCENDING)], {"name": "idx_vehicle_latest_vehicle_id", "unique": True}),
+                ([("timestamp", ASCENDING)], {"name": "idx_vehicle_latest_timestamp"}),
+            ],
+        ),
+        (
+            "vehicle_location_history",
+            _vehicle_location_history_validator(),
+            [
+                ([("vehicle_id", ASCENDING), ("timestamp", ASCENDING)], {"name": "idx_vehicle_history_vehicle_timestamp"}),
             ],
         ),
         (

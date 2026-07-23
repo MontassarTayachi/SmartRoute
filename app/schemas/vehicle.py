@@ -39,3 +39,8 @@ class VehicleResponse(VehicleBase):
     model_config = {
         "populate_by_name": True,
     }
+
+
+class VehicleDispoResponse(VehicleResponse):
+    nom: str | None = Field(None, example="Camion de livraison")
+    image_url: str | None = Field(None, example="/uploads/vehicles/vehicle_1.jpg")

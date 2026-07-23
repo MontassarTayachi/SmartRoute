@@ -23,9 +23,18 @@ uvicorn app.main:app --reload
 - Utilisateurs : `/api/v1/users`
 - Véhicules : `/api/v1/vehicles`
 - Conducteurs : `/api/v1/drivers`
+- Livraisons : `/api/v1/deliveries`
+- Positions GPS : `/api/v1/locations`
+- Routes : `/api/v1/routes`
 
 L’API expose la documentation Swagger à :
 
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+## Guide d'utilisation
+
+Le guide complet est disponible dans :
+
+`GUIDE_UTILISATION.md`

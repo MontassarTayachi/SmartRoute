@@ -1,9 +1,11 @@
+from datetime import datetime
+
 from bson import ObjectId
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
-from app.schemas.driver import DriverCreate, DriverUpdate
+from app.schemas.driver import AssignVehicleRequest, DriverCreate, DriverUpdate
 
 
 def _format_driver(doc: dict) -> dict:
@@ -16,6 +18,80 @@ def _format_driver(doc: dict) -> dict:
         "assigned_vehicle_id": str(doc["assigned_vehicle_id"]) if doc.get("assigned_vehicle_id") else None,
         "login_user_id": str(doc["login_user_id"]) if doc.get("login_user_id") else None,
     }
+
+
+def _format_vehicle_with_list(doc: dict, vehicle_list_doc: dict | None = None) -> dict:
+    vehicle_list_id = doc.get("vehicle_list_id")
+    return {
+        "_id": str(doc["_id"]),
+        "registration": doc.get("registration"),
+        "vehicle_list_id": str(vehicle_list_id) if vehicle_list_id else None,
+        "capacity_kg": doc.get("capacity_kg"),
+        "status": doc.get("status"),
+        "avg_fuel_consumption": doc.get("avg_fuel_consumption"),
+        "created_at": doc.get("created_at"),
+        "nom": vehicle_list_doc.get("nom") if vehicle_list_doc else None,
+        "image_url": vehicle_list_doc.get("image_url") if vehicle_list_doc else None,
+    }
+
+
+def _collect_vehicle_ids(drivers: list[dict]) -> list[ObjectId]:
+    vehicle_ids: set[ObjectId] = set()
+    for driver in drivers:
+        assigned_vehicle_id = driver.get("assigned_vehicle_id")
+        if assigned_vehicle_id:
+            vehicle_ids.add(assigned_vehicle_id)
+        for entry in driver.get("assignment_history", []):
+            vehicle_id = entry.get("vehicle_id")
+            if vehicle_id:
+                vehicle_ids.add(vehicle_id)
+    return list(vehicle_ids)
+
+
+async def _load_vehicles_map(db: AsyncIOMotorDatabase, vehicle_ids: list[ObjectId]) -> dict[ObjectId, dict]:
+    if not vehicle_ids:
+        return {}
+
+    vehicles = await db["vehicles"].find({"_id": {"$in": vehicle_ids}}).to_list(length=len(vehicle_ids))
+    vehicle_list_ids = list({vehicle["vehicle_list_id"] for vehicle in vehicles if vehicle.get("vehicle_list_id")})
+    vehicle_lists: dict[ObjectId, dict] = {}
+    if vehicle_list_ids:
+        async for doc in db["vehicleListe"].find({"_id": {"$in": vehicle_list_ids}}):
+            vehicle_lists[doc["_id"]] = doc
+
+    return {
+        vehicle["_id"]: _format_vehicle_with_list(vehicle, vehicle_lists.get(vehicle.get("vehicle_list_id")))
+        for vehicle in vehicles
+    }
+
+
+def _format_assignment_history(history: list, vehicles_map: dict[ObjectId, dict]) -> list[dict]:
+    formatted_history = []
+    for entry in history:
+        vehicle_id = entry.get("vehicle_id")
+        formatted_history.append(
+            {
+                "vehicle_id": str(vehicle_id) if vehicle_id else None,
+                "assigned_at": entry.get("assigned_at"),
+                "released_at": entry.get("released_at"),
+                "vehicle": vehicles_map.get(vehicle_id) if vehicle_id else None,
+            }
+        )
+    return formatted_history
+
+
+def _format_driver_with_assignments(doc: dict, vehicles_map: dict[ObjectId, dict]) -> dict:
+    assigned_vehicle_id = doc.get("assigned_vehicle_id")
+    return {
+        **_format_driver(doc),
+        "assigned_vehicle": vehicles_map.get(assigned_vehicle_id) if assigned_vehicle_id else None,
+        "assignment_history": _format_assignment_history(doc.get("assignment_history", []), vehicles_map),
+    }
+
+
+async def _format_drivers_with_assignments(db: AsyncIOMotorDatabase, drivers: list[dict]) -> list[dict]:
+    vehicles_map = await _load_vehicles_map(db, _collect_vehicle_ids(drivers))
+    return [_format_driver_with_assignments(driver, vehicles_map) for driver in drivers]
 
 
 async def _validate_login_user(
@@ -93,10 +169,8 @@ async def list_drivers(db: AsyncIOMotorDatabase, page: int = 1, size: int = 10, 
         query["availability"] = availability
 
     cursor = db["drivers"].find(query).skip(skip).limit(size)
-    items = [
-        _format_driver(doc)
-        for doc in await cursor.to_list(length=size)
-    ]
+    drivers = await cursor.to_list(length=size)
+    items = await _format_drivers_with_assignments(db, drivers)
     total = await db["drivers"].count_documents(query)
     return {"items": items, "total": total, "page": page, "size": size}
 
@@ -149,3 +223,138 @@ async def update_driver(db: AsyncIOMotorDatabase, driver_id: str, payload: Drive
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conducteur introuvable.")
     return _format_driver(updated)
+
+
+async def _get_driver_or_404(db: AsyncIOMotorDatabase, driver_id: str) -> dict:
+    if not ObjectId.is_valid(driver_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conducteur introuvable.")
+    driver = await db["drivers"].find_one({"_id": ObjectId(driver_id)})
+    if not driver:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conducteur introuvable.")
+    return driver
+
+
+async def assign_vehicle_to_driver(
+    db: AsyncIOMotorDatabase,
+    driver_id: str,
+    payload: AssignVehicleRequest,
+) -> dict:
+    driver = await _get_driver_or_404(db, driver_id)
+
+    if driver.get("assigned_vehicle_id"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ce conducteur a déjà un véhicule assigné. Désassignez-le d'abord.",
+        )
+
+    vehicle_id = payload.vehicle_id
+    if not ObjectId.is_valid(vehicle_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Identifiant véhicule invalide.")
+
+    vehicle = await db["vehicles"].find_one({"_id": ObjectId(vehicle_id)})
+    if not vehicle:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Véhicule introuvable.")
+
+    if vehicle.get("status") != "available":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Le véhicule n'est pas disponible pour l'affectation.",
+        )
+
+    existing_driver = await db["drivers"].find_one({"assigned_vehicle_id": ObjectId(vehicle_id)})
+    if existing_driver:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ce véhicule est déjà assigné à un autre conducteur.",
+        )
+
+    now = datetime.utcnow()
+    vehicle_oid = ObjectId(vehicle_id)
+    history_entry = {
+        "vehicle_id": vehicle_oid,
+        "assigned_at": now,
+        "released_at": None,
+    }
+
+    updated = await db["drivers"].find_one_and_update(
+        {"_id": ObjectId(driver_id)},
+        {
+            "$set": {"assigned_vehicle_id": vehicle_oid},
+            "$push": {"assignment_history": history_entry},
+        },
+        return_document=True,
+    )
+    await db["vehicles"].update_one(
+        {"_id": vehicle_oid},
+        {"$set": {"status": "in_use", "updated_at": now}},
+    )
+    return _format_driver(updated)
+
+
+async def unassign_vehicle_from_driver(db: AsyncIOMotorDatabase, driver_id: str) -> dict:
+    driver = await _get_driver_or_404(db, driver_id)
+
+    assigned_vehicle_id = driver.get("assigned_vehicle_id")
+    if not assigned_vehicle_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ce conducteur n'a aucun véhicule assigné.",
+        )
+
+    now = datetime.utcnow()
+    history = driver.get("assignment_history", [])
+    for entry in reversed(history):
+        if entry.get("released_at") is None and entry.get("vehicle_id") == assigned_vehicle_id:
+            entry["released_at"] = now
+            break
+
+    updated = await db["drivers"].find_one_and_update(
+        {"_id": ObjectId(driver_id)},
+        {
+            "$set": {
+                "assigned_vehicle_id": None,
+                "assignment_history": history,
+            },
+        },
+        return_document=True,
+    )
+    await db["vehicles"].update_one(
+        {"_id": assigned_vehicle_id},
+        {"$set": {"status": "available", "updated_at": now}},
+    )
+    return _format_driver(updated)
+
+async def get_driver_and_vehicle_with_current_user_context(
+    db: AsyncIOMotorDatabase,
+    login_user_id: str,
+) -> tuple[dict | None, dict | None]:
+
+    driver = await db["drivers"].find_one(
+        {"login_user_id": ObjectId(login_user_id)}
+    )
+
+    if not driver:
+        return None, None
+
+    vehicle = None
+    assigned_vehicle_id = driver.get("assigned_vehicle_id")
+
+    if assigned_vehicle_id:
+        vehicle_doc = await db["vehicles"].find_one(
+            {"_id": assigned_vehicle_id}
+        )
+
+        if vehicle_doc:
+            vehicle_list_doc = None
+
+            if vehicle_doc.get("vehicle_list_id"):
+                vehicle_list_doc = await db["vehicleListe"].find_one(
+                    {"_id": vehicle_doc["vehicle_list_id"]}
+                )
+
+            vehicle = _format_vehicle_with_list(
+                vehicle_doc,
+                vehicle_list_doc,
+            )
+
+    return _format_driver(driver), vehicle
