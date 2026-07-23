@@ -19,6 +19,7 @@ const buildUserFromToken = (token, fallbackUser = null) => {
   }
 
   return {
+    ...fallbackUser,
     id: decoded.sub ?? decoded.user_id ?? decoded.id ?? fallbackUser?.id ?? null,
     name:
       decoded.name ?? decoded.full_name ?? decoded.preferred_username ?? fallbackUser?.name ?? 'Utilisateur',

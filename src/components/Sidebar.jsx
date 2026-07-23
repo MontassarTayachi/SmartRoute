@@ -47,6 +47,17 @@ const DeliveryIcon = () => (
   </svg>
 );
 
+const TrackingIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3" />
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 2v3" />
+    <path d="M12 19v3" />
+    <path d="M2 12h3" />
+    <path d="M19 12h3" />
+  </svg>
+);
+
 const MissionIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7z" />
@@ -73,6 +84,7 @@ const getItemIcon = (item) => {
   if (item.to.includes('vehicles')) return <VehicleIcon />;
   if (item.to.includes('drivers')) return <DriverIcon />;
   if (item.to.includes('deliveries')) return <DeliveryIcon />;
+  if (item.to.includes('tracking')) return <TrackingIcon />;
   if (item.to.includes('missions')) return <MissionIcon />;
   if (item.to.includes('profile')) return <ProfileIcon />;
   if (item.to.includes('settings')) return <SettingsIcon />;

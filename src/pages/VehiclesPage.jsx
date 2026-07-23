@@ -7,11 +7,26 @@ import { getApiErrorMessage } from '../utils/apiError';
 
 const emptyForm = { id: '', registration: '', vehicleListId: '', status: 'available', capacityKg: '', avgFuelConsumption: '' };
 
+const PLATE_REGEX = /^(\d{1,4})\s*TUN\s*(\d{1,4})$/;
+
+const splitPlate = (value) => {
+  const match = PLATE_REGEX.exec((value ?? '').trim());
+  return match ? { left: match[1], right: match[2] } : { left: '', right: '' };
+};
+
+const joinPlate = (left, right) => {
+  if (!left && !right) return '';
+  return `${left} TUN ${right}`;
+};
+
+const onlyDigits = (value) => value.replace(/\D/g, '').slice(0, 4);
+
 const VehiclesPage = () => {
   const toast = useToast();
   const [vehicles, setVehicles] = useState([]);
   const [vehicleLists, setVehicleLists] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [plate, setPlate] = useState({ left: '', right: '' });
   const [loading, setLoading] = useState(false);
   const [loadingVehicleLists, setLoadingVehicleLists] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -21,7 +36,7 @@ const VehiclesPage = () => {
     if (item?.id) {
       acc[item.id] = {
         name: item.name ?? item.id,
-        imageUrl: "http://localhost:8000" + (item.imageUrl ?? item.image_url ?? ''),
+        imageUrl: `${import.meta.env.VITE_IMAGE_BASE_URL}` + (item.imageUrl ?? item.image_url ?? ''),
       };
       console.log(acc)
     }
@@ -70,6 +85,7 @@ const VehiclesPage = () => {
 
   const openCreate = () => {
     setForm(emptyForm);
+    setPlate({ left: '', right: '' });
     setModalOpen(true);
   };
 
@@ -82,7 +98,15 @@ const VehiclesPage = () => {
       capacityKg: vehicle.capacityKg ?? '',
       avgFuelConsumption: vehicle.avgFuelConsumption ?? '',
     });
+    setPlate(splitPlate(vehicle.registration));
     setModalOpen(true);
+  };
+
+  const handlePlateChange = (side, rawValue) => {
+    const digits = onlyDigits(rawValue);
+    const nextPlate = { ...plate, [side]: digits };
+    setPlate(nextPlate);
+    setForm({ ...form, registration: joinPlate(nextPlate.left, nextPlate.right) });
   };
 
   const handleSubmit = async (event) => {
@@ -105,6 +129,7 @@ const VehiclesPage = () => {
       }
       setModalOpen(false);
       setForm(emptyForm);
+      setPlate({ left: '', right: '' });
       await loadVehicles();
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Opération véhicule impossible'));
@@ -123,6 +148,45 @@ const VehiclesPage = () => {
 
   return (
     <section className="resource-page">
+      <style>{`
+        .plate-input-group {
+          display: flex;
+          align-items: center;
+          gap: 0;
+          border-radius: 8px;
+          overflow: hidden;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: rgba(255, 255, 255, 0.03);
+        }
+        .plate-input-group input {
+          border: none;
+          background: transparent;
+          text-align: center;
+          font-weight: 600;
+          letter-spacing: 2px;
+          width: 100%;
+          padding: 10px 8px;
+          color: inherit;
+          font-size: 15px;
+        }
+        .plate-input-group input:focus {
+          outline: none;
+          background: rgba(255, 255, 255, 0.06);
+        }
+        .plate-input-segment {
+          flex: 1 1 0;
+          min-width: 0;
+        }
+        .plate-input-tun {
+          flex: 0 0 auto;
+          padding: 10px 12px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          background: rgba(79, 140, 255, 0.15);
+          border-left: 1px solid rgba(255, 255, 255, 0.15);
+          border-right: 1px solid rgba(255, 255, 255, 0.15);
+        }
+      `}</style>
       <div className="resource-header">
         <div>
           <h1>Véhicules</h1>
@@ -187,7 +251,31 @@ const VehiclesPage = () => {
       {modalOpen ? (
         <Modal title={form.id ? 'Modifier un véhicule' : 'Créer un véhicule'} onClose={() => setModalOpen(false)}>
           <form className="resource-form" onSubmit={handleSubmit}>
-            <input className="input-glass" placeholder="Immatriculation" value={form.registration} onChange={(event) => setForm({ ...form, registration: event.target.value })} />
+            <div className="plate-input-group">
+              <span className="plate-input-segment">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="****"
+                  maxLength={4}
+                  value={plate.left}
+                  onChange={(event) => handlePlateChange('left', event.target.value)}
+                  required
+                />
+              </span>
+              <span className="plate-input-tun">TUN</span>
+              <span className="plate-input-segment">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="****"
+                  maxLength={4}
+                  value={plate.right}
+                  onChange={(event) => handlePlateChange('right', event.target.value)}
+                  required
+                />
+              </span>
+            </div>
             <div className="select-with-icon">
               {mapVehicleListById[form.vehicleListId]?.imageUrl ? (
                 <img

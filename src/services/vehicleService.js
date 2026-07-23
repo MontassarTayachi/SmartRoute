@@ -59,6 +59,87 @@ const normalizeVehicleListCollection = (payload) => {
 	};
 };
 
+const normalizeVehicleLocation = (payload) => {
+	if (!payload || typeof payload !== 'object') {
+		return payload;
+	}
+
+	const location = payload.location ?? payload.data ?? payload.position ?? payload;
+	return {
+		vehicleId:
+			normalizeEntityId(location?.vehicle) ??
+			location?.vehicle_id ??
+			location?.vehicleId ??
+			normalizeEntityId(payload?.vehicle) ??
+			payload?.vehicle_id ??
+			payload?.vehicleId ??
+			null,
+		latitude: location?.latitude ?? location?.lat ?? null,
+		longitude: location?.longitude ?? location?.lng ?? null,
+		timestamp: location?.timestamp ?? location?.createdAt ?? location?.updatedAt ?? null,
+	};
+};
+
+export const getVehicleLocation = async (id) =>
+	({
+		...normalizeVehicleLocation(unwrapApiData(await api.get(`/vehicles/${id}/location`))),
+		vehicleId: id,
+	});
+
+export const getVehiclesLocations = async () => {
+	const payload = unwrapApiData(await api.get('/vehicles/locations'));
+	const list = Array.isArray(payload)
+		? payload
+		: payload?.items ?? payload?.results ?? payload?.data ?? [];
+
+	if (!Array.isArray(list)) {
+		return [];
+	}
+
+	return list
+		.map(normalizeVehicleLocation)
+		.filter((location) => location?.vehicleId != null && location?.latitude != null && location?.longitude != null);
+};
+
+export const sendVehicleLocation = async (id, payload) =>
+	normalizeVehicleLocation(
+		unwrapApiData(
+			await api.post(`/vehicles/${id}/location`, {
+				latitude: payload.latitude,
+				longitude: payload.longitude,
+				timestamp: payload.timestamp,
+			}),
+		),
+	);
+
+export const buildVehicleTrackingSocketUrl = (id) => {
+	const baseUrl = new URL(import.meta.env.VITE_API_BASE_URL, window.location.origin);
+	const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+	const basePath = baseUrl.pathname.replace(/\/$/, '');
+	return `${protocol}//${baseUrl.host}${basePath}/ws/vehicles/${id}/tracking`;
+};
+
+export const buildVehiclesTrackingSocketUrl = () => {
+	const baseUrl = new URL(import.meta.env.VITE_API_BASE_URL, window.location.origin);
+	const protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+	const basePath = baseUrl.pathname.replace(/\/$/, '');
+	return `${protocol}//${baseUrl.host}${basePath}/ws/vehicles/tracking`;
+};
+
+export const normalizeVehicleLocationEvent = (payload) => {
+	if (!payload || typeof payload !== 'object') {
+		return null;
+	}
+
+	const source = payload.data ?? payload.location ?? payload.position ?? payload;
+	const normalized = normalizeVehicleLocation(source);
+	if (normalized?.vehicleId == null || normalized?.latitude == null || normalized?.longitude == null) {
+		return null;
+	}
+
+	return normalized;
+};
+
 export const getVehicles = async (params = {}) =>
 	normalizeVehicleCollection(unwrapApiData(await api.get('/vehicles', { params })));
 export const getVehicleLists = async (params = {}) =>
@@ -88,4 +169,6 @@ export const updateVehicle = async (id, payload) =>
 			}),
 		),
 	);
+
 export const deleteVehicle = async (id) => unwrapApiData(await api.delete(`/vehicles/${id}`));
+export const getAvailableVehicles = async (params = {}) => unwrapApiData(await api.get('/vehicles/dispo', { params }));
