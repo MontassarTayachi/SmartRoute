@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, Request, UploadFile, File, Form, status
-from fastapi.responses import JSONResponse
+from flask import Blueprint, current_app, jsonify, request
 
-from app.dependencies import get_current_user
-from app.schemas.vehicle_list import VehicleListCreate, VehicleListResponse, VehicleListUpdate
+from app.dependencies import require_auth
+from app.schemas.vehicle_list import VehicleListCreate, VehicleListUpdate
 from app.services.vehicle_list_service import (
     create_vehicle_list,
     delete_vehicle_list,
@@ -11,66 +10,54 @@ from app.services.vehicle_list_service import (
     update_vehicle_list,
 )
 
-router = APIRouter(prefix="/api/v1/vehicle-list", tags=["vehicle-list"])
+vehicle_list_bp = Blueprint("vehicle_list", __name__, url_prefix="/api/v1/vehicle-list")
 
 
-@router.get("/", response_model=dict)
-async def get_vehicle_list(
-    page: int = 1,
-    size: int = 10,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await list_vehicle_list(db, page=page, size=size)
+@vehicle_list_bp.route("/", methods=["GET"])
+@require_auth
+def get_vehicle_list():
+    page = request.args.get("page", 1, type=int)
+    size = request.args.get("size", 10, type=int)
+    db = current_app.mongodb
+    return jsonify(list_vehicle_list(db, page=page, size=size)), 200
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_vehicle_list_route(
-    nom: str = Form(...),
-    image: UploadFile = File(None),
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
+@vehicle_list_bp.route("/", methods=["POST"])
+@require_auth
+def create_vehicle_list_route():
+    nom = request.form.get("nom")
+    if not nom:
+        return jsonify({"detail": "Le champ 'nom' est requis."}), 422
+    image = request.files.get("image")
     payload = VehicleListCreate(nom=nom)
-    return await create_vehicle_list(db, payload, image_file=image)
+    db = current_app.mongodb
+    return jsonify(create_vehicle_list(db, payload, image_file=image)), 201
 
 
-@router.get("/{item_id}", response_model=VehicleListResponse)
-async def get_vehicle_list_item(
-    item_id: str,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    item = await get_vehicle_list_by_id(db, item_id)
+@vehicle_list_bp.route("/<item_id>", methods=["GET"])
+@require_auth
+def get_vehicle_list_item(item_id):
+    db = current_app.mongodb
+    item = get_vehicle_list_by_id(db, item_id)
     if not item:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"detail": "Élément introuvable."},
-        )
-    return item
+        return jsonify({"detail": "Élément introuvable."}), 404
+    return jsonify(item), 200
 
 
-@router.put("/{item_id}", response_model=VehicleListResponse)
-async def update_vehicle_list_route(
-    item_id: str,
-    nom: str = Form(None),
-    image: UploadFile = File(None),
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
+@vehicle_list_bp.route("/<item_id>", methods=["PUT"])
+@require_auth
+def update_vehicle_list_route(item_id):
+    nom = request.form.get("nom")
+    image = request.files.get("image")
     payload = VehicleListUpdate(nom=nom)
-    return await update_vehicle_list(db, item_id, payload, image_file=image)
+    db = current_app.mongodb
+    return jsonify(update_vehicle_list(db, item_id, payload, image_file=image)), 200
 
 
-@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_vehicle_list_route(
-    item_id: str,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    await delete_vehicle_list(db, item_id)
+@vehicle_list_bp.route("/<item_id>", methods=["DELETE"])
+@require_auth
+def delete_vehicle_list_route(item_id):
+    db = current_app.mongodb
+    delete_vehicle_list(db, item_id)
+    return "", 204
+

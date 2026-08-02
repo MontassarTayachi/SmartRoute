@@ -128,7 +128,7 @@ def _deliveries_validator() -> dict:
                 "dropoff_address_lat": {"bsonType": ["double", "int"], "minimum": -90, "maximum": 90, "description": "Latitude de livraison."},
                 "dropoff_address_lng": {"bsonType": ["double", "int"], "minimum": -180, "maximum": 180, "description": "Longitude de livraison."},
                 "status": {
-                    "enum": ["pending", "assigned", "in_progress", "delivered", "cancelled"],
+                    "enum": ["pending", "assigned", "picked", "in_progress", "delivered", "cancelled"],
                     "description": "Statut de la livraison.",
                 },
                 "priority": {"bsonType": "string", "description": "Priorité de la livraison."},

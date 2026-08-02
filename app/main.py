@@ -1,66 +1,133 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+import json
+import logging
+from datetime import datetime
 from pathlib import Path
 
+from bson import ObjectId
+from flask import Flask, jsonify, send_from_directory
+from flask.json.provider import DefaultJSONProvider
+from flask_cors import CORS
+
 from app.core.config import settings
+from app.core.exceptions import APIException
 from app.db.init_db import initialize_database
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
-from app.routers.auth import router as auth_router
-from app.routers.deliveries import router as deliveries_router
-from app.routers.driver_assignments import router as driver_assignments_router
-from app.routers.users import router as users_router
-from app.routers.vehicles_live import router as vehicles_live_router
-from app.routers.tracking import router as tracking_router
-from app.routers.vehicles import router as vehicles_router
-from app.routers.drivers import router as drivers_router
-from app.routers.locations import router as locations_router
-from app.routers.vehicle_list import router as vehicle_list_router
-from app.routers.routes import router as routes_router
+from app.socket_manager import socketio
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan de l'application : initialisation MongoDB et création des collections."""
-    app.state.mongo_client, app.state.mongodb = connect_to_mongo(
-        settings.MONGO_URI, settings.MONGO_DB
-    )
+class SmartRouteJSONProvider(DefaultJSONProvider):
+    """Custom JSON provider that handles datetime and ObjectId serialization."""
+
+    def default(self, o):
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, ObjectId):
+            return str(o)
+        return super().default(o)
+
+
+def create_app() -> Flask:
+    app = Flask(__name__, static_folder=None)
+    app.url_map.strict_slashes = False
+    app.json_provider_class = SmartRouteJSONProvider
+    app.json = SmartRouteJSONProvider(app)
+
+    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+    # Database
+    client, db = connect_to_mongo(settings.MONGO_URI, settings.MONGO_DB)
+    app.mongodb_client = client
+    app.mongodb = db
+
     initialize_database(settings.MONGO_URI, settings.MONGO_DB)
-    yield
-    await close_mongo_connection(app.state.mongo_client)
+
+    # Uploads directory — use absolute path so send_from_directory works regardless of CWD
+    uploads_abs = Path(__file__).parent.parent / "uploads"
+    uploads_abs.mkdir(exist_ok=True)
+
+    @app.route("/uploads/<path:filename>")
+    def serve_uploads(filename):
+        return send_from_directory(str(uploads_abs), filename)
+
+    # Error handlers
+    @app.errorhandler(APIException)
+    def handle_api_exception(e):
+        return jsonify({"detail": e.detail}), e.status_code
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({"detail": "Resource introuvable."}), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        return jsonify({"detail": "Méthode non autorisée."}), 405
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        return jsonify({"detail": "Erreur interne du serveur."}), 500
+
+    # Register blueprints — order matters: /live and /locations must come before /<vehicle_id>
+    from app.routers.auth import auth_bp
+    from app.routers.users import users_bp
+    from app.routers.locations import locations_bp
+    from app.routers.routes import routes_bp
+    from app.routers.driver_assignments import driver_assignments_bp
+    from app.routers.vehicles_live import vehicles_live_bp
+    from app.routers.tracking import tracking_bp
+    from app.routers.vehicles import vehicles_bp
+    from app.routers.drivers import drivers_bp
+    from app.routers.vehicle_list import vehicle_list_bp
+    from app.routers.missions import missions_bp
+    from app.routers.deliveries import deliveries_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(users_bp)
+    app.register_blueprint(locations_bp)
+    app.register_blueprint(routes_bp)
+    app.register_blueprint(driver_assignments_bp)
+    app.register_blueprint(vehicles_live_bp)
+    app.register_blueprint(tracking_bp)
+    app.register_blueprint(vehicles_bp)
+    app.register_blueprint(drivers_bp)
+    app.register_blueprint(vehicle_list_bp)
+    app.register_blueprint(missions_bp)
+    app.register_blueprint(deliveries_bp)
+
+    return app
 
 
-app = FastAPI(
-    title="SmartRoute API",
-    version="0.1.0",
-    description="API FastAPI pour la gestion de flotte SmartRoute.",
-    lifespan=lifespan,
-)
+def create_app_with_scheduler() -> Flask:
+    app = create_app()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    socketio.init_app(app, cors_allowed_origins="*", async_mode="eventlet")
 
-# Créer le dossier uploads s'il n'existe pas
-uploads_dir = Path("uploads")
-uploads_dir.mkdir(exist_ok=True)
+    # Register SocketIO tracking events
+    from app.routers.tracking import register_tracking_socket
+    register_tracking_socket(socketio)
 
-# Monter le dossier des fichiers statiques (uploads)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    # Scheduler
+    from app.services.scheduler_service import SchedulerService
+    from app.services.mission_service import MissionService
 
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(deliveries_router)
-app.include_router(locations_router)
-app.include_router(routes_router)
-app.include_router(driver_assignments_router)
-app.include_router(vehicles_live_router)
-app.include_router(tracking_router)
-app.include_router(vehicles_router)
-app.include_router(drivers_router)
-app.include_router(vehicle_list_router)
+    scheduler_service = SchedulerService()
+
+    def daily_mission_generation():
+        with app.app_context():
+            try:
+                MissionService(app.mongodb).generate_missions_for_date(datetime.utcnow())
+            except Exception as exc:
+                logging.getLogger(__name__).error(f"Error in daily mission generation: {exc}")
+
+    scheduler_service.add_daily_mission_generation(daily_mission_generation, hour=5, minute=55)
+    scheduler_service.start()
+    app.scheduler_service = scheduler_service
+
+    return app
+
+
+if __name__ == "__main__":
+    import eventlet
+    eventlet.monkey_patch()
+
+    app = create_app_with_scheduler()
+    socketio.run(app, host="0.0.0.0", port=8000, debug=False)

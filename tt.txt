@@ -1,0 +1,194 @@
+Ajouter un module d’optimisation automatique des missions de livraison dans le backend FastAPI.
+
+Objectif :
+Créer un système qui s’exécute automatiquement chaque jour à 00:00 afin d’analyser les livraisons planifiées du jour et générer les missions optimisées pour chaque livreur en respectant les contraintes géographiques, temporelles et de capacité des véhicules.
+
+Fonctionnement attendu :
+
+1. Déclenchement automatique (Scheduler)
+- Ajouter un scheduler (ex: APScheduler ou Celery Beat) qui exécute une tâche chaque jour à 00:00.
+- La tâche doit :
+  - récupérer toutes les livraisons prévues pour la journée courante.
+  - récupérer les livreurs disponibles.
+  - récupérer les véhicules associés avec leurs capacités (`capacity_kg`).
+
+2. Préparation et analyse des données
+Pour chaque livraison récupérer :
+- Point de départ (pickup/retrait).
+- Point d’arrivée (delivery/dépôt client).
+- Poids de la livraison (`weight_kg`).
+- Contraintes éventuelles :
+  - ordre obligatoire des étapes (exemple : A1 retrait avant A2 dépôt).
+  - disponibilité du livreur.
+  - capacité maximale du véhicule.
+
+Calculer :
+- La position moyenne (centroïde) entre le point de départ et le point d’arrivée de chaque livraison.
+- Les distances géographiques entre :
+  - livreurs,
+  - régions,
+  - points de livraison.
+
+3. Clustering géographique des livraisons
+Utiliser un algorithme de clustering pour diviser les livraisons du jour en 5 régions optimisées.
+
+Exemple :
+- Utiliser K-Means avec K=5.
+- Entrées :
+  - latitude moyenne.
+  - longitude moyenne.
+- Résultat :
+  - chaque livraison reçoit un `region_id`.
+
+4. Affectation des livreurs aux régions
+Pour chaque région :
+- Calculer la distance entre la position actuelle du livreur et le centre de la région.
+- Affecter automatiquement les livreurs à la région la plus proche.
+- Optimiser l’affectation afin de minimiser :
+  - distance de déplacement du livreur.
+  - temps de trajet estimé.
+
+Utiliser par exemple :
+- Nearest Neighbor.
+- Distance Haversine.
+- Ou une approche d’optimisation basée sur un coût global.
+
+5. Répartition des livraisons par livreur dans chaque région
+Pour chaque région :
+- Récupérer le nombre de livreurs disponibles.
+- Diviser les livraisons entre les livreurs selon :
+  - proximité géographique.
+  - charge totale (`weight_kg`).
+  - capacité du véhicule.
+
+Contraintes obligatoires :
+- La somme des poids des livraisons affectées à un véhicule ne doit jamais dépasser :
+  vehicle.capacity_kg.
+
+Créer une structure de mission :
+
+Mission {
+    driver_id,
+    vehicle_id,
+    region_id,
+    deliveries[],
+    total_weight,
+    estimated_distance,
+    estimated_duration,
+    status
+}
+
+6. Optimisation de l’ordre des livraisons
+Pour chaque mission générée :
+
+Créer un algorithme d’optimisation de tournée (Routing Optimization).
+
+Objectif :
+Trouver l’ordre optimal des livraisons afin de réduire :
+- distance totale parcourue.
+- temps total.
+- coût opérationnel.
+
+Contraintes :
+- Chaque point de retrait doit être visité avant son point de livraison associé.
+
+Exemple :
+Livraison A :
+    A1 = Pickup
+    A2 = Delivery
+
+L’ordre doit toujours respecter :
+A1 → A2
+
+Utiliser :
+- Nearest Neighbor comme première version.
+- Préparer l’architecture pour ajouter plus tard :
+  - Genetic Algorithm.
+  - Vehicle Routing Problem (VRP).
+  - OR-Tools.
+
+7. Intégration OpenStreetMap
+Utiliser OpenStreetMap pour les calculs réels de trajet.
+
+Services possibles :
+- OSRM Routing API.
+- GraphHopper.
+- OpenRouteService.
+
+Utiliser les coordonnées GPS pour :
+- calculer les distances routières.
+- calculer les durées estimées.
+- générer le chemin optimisé.
+
+Chaque mission doit contenir :
+- liste ordonnée des étapes.
+- coordonnées GPS.
+- distance totale.
+- durée estimée.
+- polyline du trajet pour affichage React Leaflet.
+
+8. Base de données
+Créer les modèles nécessaires :
+
+Delivery :
+- id
+- pickup_location
+- delivery_location
+- weight_kg
+- date
+- status
+
+Mission :
+- id
+- driver_id
+- vehicle_id
+- region_id
+- deliveries_order[]
+- total_weight
+- route_distance
+- route_duration
+- created_at
+
+
+Ajouter les relations nécessaires avec :
+- Driver
+- Vehicle
+- Delivery
+
+
+9. Architecture du code
+Créer un module dédié :
+
+app/
+ ├── services/
+ │    ├── scheduler_service.py
+ │    ├── clustering_service.py
+ │    ├── driver_assignment_service.py
+ │    ├── route_optimizer.py
+ │    └── osm_routing_service.py
+ │
+ ├── algorithms/
+ │    ├── kmeans.py
+ │    ├── nearest_neighbor.py
+ │    └── capacity_optimizer.py
+
+
+10. API supplémentaires
+
+Ajouter des endpoints :
+
+POST /api/missions/generate
+- déclencher manuellement l’optimisation.
+
+GET /api/missions/today
+- récupérer les missions générées du jour.
+
+GET /api/missions/{mission_id}
+- récupérer le détail d’une mission avec son trajet.
+
+11. Qualité du code
+- Utiliser Python proprement avec des classes séparées.
+- Ajouter des logs pour suivre l’exécution du scheduler.
+- Ajouter une gestion des erreurs.
+- Préparer le système pour évoluer vers un vrai problème VRP avec plusieurs véhicules.
+- Fournir des tests unitaires pour les algorithmes principaux.

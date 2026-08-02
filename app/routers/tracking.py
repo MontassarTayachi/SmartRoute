@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.encoders import jsonable_encoder
+from flask import Blueprint, current_app, jsonify, request
+from flask_socketio import emit
 
-from app.dependencies import get_current_user
-from app.schemas.tracking import VehicleLocation, VehicleLocationHistoryResponse, VehicleLocationWrite
+from app.dependencies import parse_body, require_auth
+from app.schemas.tracking import VehicleLocationWrite
 from app.services.tracking_service import (
     get_vehicle_latest_location,
     list_latest_vehicle_locations,
@@ -12,95 +12,66 @@ from app.services.tracking_service import (
     save_vehicle_location,
 )
 
+tracking_bp = Blueprint("tracking", __name__, url_prefix="/api/v1")
+
+
+@tracking_bp.route("/vehicles/<vehicle_id>/location", methods=["POST"])
+@require_auth
+def post_vehicle_location_route(vehicle_id):
+    payload = parse_body(VehicleLocationWrite)
+    db = current_app.mongodb
+    location = save_vehicle_location(db, vehicle_id=vehicle_id, payload=payload)
+    # Broadcast updated location to all SocketIO tracking clients
+    from app.socket_manager import socketio
+    socketio.emit("location_update", location, namespace="/tracking")
+    return jsonify(location), 200
+
+
+@tracking_bp.route("/vehicles/<vehicle_id>/location", methods=["GET"])
+@require_auth
+def get_vehicle_location_route(vehicle_id):
+    db = current_app.mongodb
+    return jsonify(get_vehicle_latest_location(db, vehicle_id=vehicle_id)), 200
+
+
+@tracking_bp.route("/vehicles/locations", methods=["GET"])
+@require_auth
+def get_all_vehicle_locations_route():
+    db = current_app.mongodb
+    return jsonify(list_latest_vehicle_locations(db)), 200
+
+
+@tracking_bp.route("/vehicles/<vehicle_id>/locations/history", methods=["GET"])
+@require_auth
+def get_vehicle_location_history_route(vehicle_id):
+    page = request.args.get("page", 1, type=int)
+    limit = request.args.get("limit", 100, type=int)
+    limit = max(1, min(limit, 1000))
+    db = current_app.mongodb
+    return jsonify(list_vehicle_location_history(db, vehicle_id=vehicle_id, page=page, limit=limit)), 200
+
+
+# ---------------------------------------------------------------------------
+# SocketIO events — registered in main.py via register_tracking_socket(socketio)
+# ---------------------------------------------------------------------------
+
+def register_tracking_socket(socketio):
+    """Register SocketIO event handlers for the /tracking namespace."""
+
+    @socketio.on("connect", namespace="/tracking")
+    def on_tracking_connect():
+        db = current_app.mongodb
+        locations = list_latest_vehicle_locations(db)
+        for location in locations:
+            emit("location_update", location)
+
+    @socketio.on("disconnect", namespace="/tracking")
+    def on_tracking_disconnect():
+        pass
+
+
 
 class VehicleTrackingConnectionManager:
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        self._connections.add(websocket)
-
-    def disconnect(self, websocket: WebSocket) -> None:
-        self._connections.discard(websocket)
-
-    async def broadcast(self, payload: dict) -> None:
-        serialized_payload = jsonable_encoder(payload)
-        active_connections = self._connections.copy()
-        for websocket in active_connections:
-            try:
-                await websocket.send_json(serialized_payload)
-            except Exception:
-                self.disconnect(websocket)
-
-
-tracking_manager = VehicleTrackingConnectionManager()
-
-router = APIRouter(prefix="/api/v1", tags=["tracking"])
-
-
-@router.post("/vehicles/{vehicle_id}/location", response_model=VehicleLocation, status_code=status.HTTP_200_OK)
-async def post_vehicle_location_route(
-    vehicle_id: str,
-    payload: VehicleLocationWrite,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    location = await save_vehicle_location(db, vehicle_id=vehicle_id, payload=payload)
-    await tracking_manager.broadcast(location)
-    return location
-
-
-@router.get("/vehicles/{vehicle_id}/location", response_model=VehicleLocation, status_code=status.HTTP_200_OK)
-async def get_vehicle_location_route(
-    vehicle_id: str,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await get_vehicle_latest_location(db, vehicle_id=vehicle_id)
-
-
-@router.get("/vehicles/locations", response_model=list[VehicleLocation], status_code=status.HTTP_200_OK)
-async def get_all_vehicle_locations_route(
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await list_latest_vehicle_locations(db)
-
-
-@router.get(
-    "/vehicles/{vehicle_id}/locations/history",
-    response_model=VehicleLocationHistoryResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def get_vehicle_location_history_route(
-    vehicle_id: str,
-    page: int = Query(1, ge=1),
-    limit: int = Query(100, ge=1, le=1000),
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await list_vehicle_location_history(db, vehicle_id=vehicle_id, page=page, limit=limit)
-
-
-@router.websocket("/ws/vehicles/tracking")
-async def vehicles_tracking_websocket(websocket: WebSocket):
-    await tracking_manager.connect(websocket)
-
-    try:
-        db = websocket.app.state.mongodb
-        latest_locations = await list_latest_vehicle_locations(db)
-        for location in latest_locations:
-            await websocket.send_json(jsonable_encoder(location))
-
-        while True:
-            # Keep the WebSocket alive; incoming payloads are ignored.
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        pass
-    finally:
-        tracking_manager.disconnect(websocket)

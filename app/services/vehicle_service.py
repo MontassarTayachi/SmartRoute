@@ -1,10 +1,12 @@
 from datetime import datetime
+
 from bson import ObjectId
-from fastapi import HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
+from app.core.exceptions import APIException
 from app.schemas.vehicle import VehicleCreate, VehicleUpdate
+
 
 def _format_vehicle(doc: dict) -> dict:
     vehicle_list_id = doc.get("vehicle_list_id")
@@ -18,15 +20,15 @@ def _format_vehicle(doc: dict) -> dict:
         "created_at": doc.get("created_at"),
     }
 
-async def create_vehicle(db: AsyncIOMotorDatabase, payload: VehicleCreate) -> dict:
-    # Vérifier que le vehicle_list_id existe
+
+def create_vehicle(db: Database, payload: VehicleCreate) -> dict:
     if not ObjectId.is_valid(payload.vehicle_list_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID vehicleListe invalide.")
-    
-    vehicle_list = await db["vehicleListe"].find_one({"_id": ObjectId(payload.vehicle_list_id)})
+        raise APIException(400, "ID vehicleListe invalide.")
+
+    vehicle_list = db["vehicleListe"].find_one({"_id": ObjectId(payload.vehicle_list_id)})
     if not vehicle_list:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="vehicleListe introuvable.")
-    
+        raise APIException(404, "vehicleListe introuvable.")
+
     now = datetime.utcnow()
     document = {
         "registration": payload.registration,
@@ -37,17 +39,17 @@ async def create_vehicle(db: AsyncIOMotorDatabase, payload: VehicleCreate) -> di
         "created_at": now,
     }
     try:
-        result = await db["vehicles"].insert_one(document)
+        result = db["vehicles"].insert_one(document)
         document["_id"] = result.inserted_id
         return _format_vehicle(document)
     except DuplicateKeyError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un véhicule avec cette immatriculation existe déjà.")
+        raise APIException(409, "Un véhicule avec cette immatriculation existe déjà.")
 
 
-async def get_vehicle_by_id(db: AsyncIOMotorDatabase, vehicle_id: str) -> dict | None:
+def get_vehicle_by_id(db: Database, vehicle_id: str) -> dict | None:
     if not ObjectId.is_valid(vehicle_id):
         return None
-    document = await db["vehicles"].find_one({"_id": ObjectId(vehicle_id)})
+    document = db["vehicles"].find_one({"_id": ObjectId(vehicle_id)})
     return _format_vehicle(document) if document else None
 
 
@@ -66,39 +68,40 @@ def _format_vehicle_dispo(doc: dict, vehicle_list_doc: dict | None = None) -> di
     }
 
 
-async def list_unassigned_vehicles(
-    db: AsyncIOMotorDatabase,
-    page: int = 1,
-    size: int = 10,
-) -> dict:
+def list_unassigned_vehicles(db: Database, page: int = 1, size: int = 10) -> dict:
     assigned_vehicle_ids = [
         vehicle_id
-        for vehicle_id in await db["drivers"].distinct("assigned_vehicle_id")
+        for vehicle_id in db["drivers"].distinct("assigned_vehicle_id")
         if vehicle_id is not None
     ]
     query = {"_id": {"$nin": assigned_vehicle_ids}}
     skip = max(page - 1, 0) * size
 
-    cursor = db["vehicles"].find(query).skip(skip).limit(size)
-    vehicles = await cursor.to_list(length=size)
+    vehicles = list(db["vehicles"].find(query).skip(skip).limit(size))
 
     vehicle_list_ids = list(
         {vehicle["vehicle_list_id"] for vehicle in vehicles if vehicle.get("vehicle_list_id")}
     )
     vehicle_lists: dict = {}
     if vehicle_list_ids:
-        async for doc in db["vehicleListe"].find({"_id": {"$in": vehicle_list_ids}}):
+        for doc in db["vehicleListe"].find({"_id": {"$in": vehicle_list_ids}}):
             vehicle_lists[doc["_id"]] = doc
 
     items = [
         _format_vehicle_dispo(vehicle, vehicle_lists.get(vehicle.get("vehicle_list_id")))
         for vehicle in vehicles
     ]
-    total = await db["vehicles"].count_documents(query)
+    total = db["vehicles"].count_documents(query)
     return {"items": items, "total": total, "page": page, "size": size}
 
 
-async def list_vehicles(db: AsyncIOMotorDatabase, page: int = 1, size: int = 10, status: str | None = None, vehicle_list_id: str | None = None) -> dict:
+def list_vehicles(
+    db: Database,
+    page: int = 1,
+    size: int = 10,
+    status: str | None = None,
+    vehicle_list_id: str | None = None,
+) -> dict:
     skip = max(page - 1, 0) * size
     query = {}
     if status:
@@ -109,53 +112,60 @@ async def list_vehicles(db: AsyncIOMotorDatabase, page: int = 1, size: int = 10,
         else:
             return {"items": [], "total": 0, "page": page, "size": size}
 
-    cursor = db["vehicles"].find(query).skip(skip).limit(size)
-    items = [
-        _format_vehicle(doc)
-        for doc in await cursor.to_list(length=size)
-    ]
-    total = await db["vehicles"].count_documents(query)
+    items = [_format_vehicle(doc) for doc in db["vehicles"].find(query).skip(skip).limit(size)]
+    total = db["vehicles"].count_documents(query)
     return {"items": items, "total": total, "page": page, "size": size}
 
 
-async def update_vehicle(db: AsyncIOMotorDatabase, vehicle_id: str, payload: VehicleUpdate) -> dict:
+def update_vehicle(db: Database, vehicle_id: str, payload: VehicleUpdate) -> dict:
     if not ObjectId.is_valid(vehicle_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Véhicule introuvable.")
+        raise APIException(404, "Véhicule introuvable.")
 
     update_data = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
-    
-    # Valider vehicle_list_id s'il est fourni
+
     if "vehicle_list_id" in update_data and update_data["vehicle_list_id"]:
         if not ObjectId.is_valid(update_data["vehicle_list_id"]):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID vehicleListe invalide.")
-        
-        vehicle_list = await db["vehicleListe"].find_one({"_id": ObjectId(update_data["vehicle_list_id"])})
+            raise APIException(400, "ID vehicleListe invalide.")
+        vehicle_list = db["vehicleListe"].find_one({"_id": ObjectId(update_data["vehicle_list_id"])})
         if not vehicle_list:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="vehicleListe introuvable.")
-        
+            raise APIException(404, "vehicleListe introuvable.")
         update_data["vehicle_list_id"] = ObjectId(update_data["vehicle_list_id"])
-    
+
     if not update_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune donnée à mettre à jour.")
+        raise APIException(400, "Aucune donnée à mettre à jour.")
     update_data["updated_at"] = datetime.utcnow()
     try:
-        updated = await db["vehicles"].find_one_and_update(
+        updated = db["vehicles"].find_one_and_update(
             {"_id": ObjectId(vehicle_id)},
             {"$set": update_data},
             return_document=True,
         )
     except DuplicateKeyError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette immatriculation est déjà utilisée.")
+        raise APIException(409, "Cette immatriculation est déjà utilisée.")
 
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Véhicule introuvable.")
+        raise APIException(404, "Véhicule introuvable.")
     return _format_vehicle(updated)
 
 
-async def delete_vehicle(db: AsyncIOMotorDatabase, vehicle_id: str) -> None:
+def delete_vehicle(db: Database, vehicle_id: str) -> None:
     if not ObjectId.is_valid(vehicle_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Véhicule introuvable.")
+        raise APIException(404, "Véhicule introuvable.")
 
-    result = await db["vehicles"].delete_one({"_id": ObjectId(vehicle_id)})
+    result = db["vehicles"].delete_one({"_id": ObjectId(vehicle_id)})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Véhicule introuvable.")
+        raise APIException(404, "Véhicule introuvable.")
+
+
+def _format_vehicle(doc: dict) -> dict:
+    vehicle_list_id = doc.get("vehicle_list_id")
+    return {
+        "_id": str(doc["_id"]),
+        "registration": doc.get("registration"),
+        "vehicle_list_id": str(vehicle_list_id) if vehicle_list_id else None,
+        "capacity_kg": doc.get("capacity_kg"),
+        "status": doc.get("status"),
+        "avg_fuel_consumption": doc.get("avg_fuel_consumption"),
+        "created_at": doc.get("created_at"),
+    }
+

@@ -1,10 +1,8 @@
-from datetime import timedelta
-from fastapi import HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
+from app.core.exceptions import APIException
 from app.core.security import create_access_token, create_refresh_token, verify_password
-from app.schemas.user import UserCreate, UserResponse
 
 
 def _format_user(doc: dict) -> dict:
@@ -19,8 +17,8 @@ def _format_user(doc: dict) -> dict:
     }
 
 
-async def authenticate_user(db: AsyncIOMotorDatabase, email: str, password: str) -> dict | None:
-    user = await db["users"].find_one({"email": email})
+def authenticate_user(db: Database, email: str, password: str) -> dict | None:
+    user = db["users"].find_one({"email": email})
     if not user:
         return None
     if not verify_password(password, user["password_hash"]):
@@ -30,10 +28,10 @@ async def authenticate_user(db: AsyncIOMotorDatabase, email: str, password: str)
     return _format_user(user)
 
 
-async def login(db: AsyncIOMotorDatabase, email: str, password: str) -> dict:
-    user = await authenticate_user(db, email, password)
+def login(db: Database, email: str, password: str) -> dict:
+    user = authenticate_user(db, email, password)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe invalide.")
+        raise APIException(401, "Email ou mot de passe invalide.")
 
     return {
         "access_token": create_access_token(subject=user["_id"]),
@@ -43,24 +41,28 @@ async def login(db: AsyncIOMotorDatabase, email: str, password: str) -> dict:
     }
 
 
-async def refresh_token(db: AsyncIOMotorDatabase, refresh_token: str) -> dict:
+def refresh_token(db: Database, refresh_tok: str) -> dict:
     from app.core.security import decode_token
 
+    if not refresh_tok:
+        raise APIException(401, "Refresh token manquant.")
+
     try:
-        payload = decode_token(refresh_token)
+        payload = decode_token(refresh_tok)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token invalide.")
+        raise APIException(401, "Refresh token invalide.")
 
     if payload.get("type") != "refresh":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide pour le rafraîchissement.")
+        raise APIException(401, "Token invalide pour le rafraîchissement.")
 
     user_id = payload.get("sub")
-    user = await db["users"].find_one({"_id": user_id})
+    user = db["users"].find_one({"_id": user_id})
     if not user or not user.get("is_active", True):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Compte introuvable ou inactif.")
+        raise APIException(401, "Compte introuvable ou inactif.")
 
     return {
         "access_token": create_access_token(subject=user_id),
         "refresh_token": create_refresh_token(subject=user_id),
         "token_type": "bearer",
     }
+

@@ -1,35 +1,78 @@
+from functools import wraps
+
 from bson import ObjectId
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
+from flask import current_app, g, jsonify, request
 
 from app.core.security import decode_token
 from app.services.user_service import get_user_by_id
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+def _extract_token() -> str | None:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return None
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme), request: Request = None):
+def get_current_user():
+    """Validate JWT and return (user, None) or (None, error_response)."""
+    token = _extract_token()
+    if not token:
+        return None, (jsonify({"detail": "Token manquant."}), 401)
+
     try:
         payload = decode_token(token)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+        return None, (jsonify({"detail": str(exc)}), 401)
 
     if payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide pour l'accès.")
+        return None, (jsonify({"detail": "Token invalide pour l'accès."}), 401)
 
     user_id = payload.get("sub")
     if not user_id or not ObjectId.is_valid(user_id):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable.")
+        return None, (jsonify({"detail": "Utilisateur introuvable."}), 401)
 
-    db = request.app.state.mongodb
-    user = await get_user_by_id(db, user_id)
+    db = current_app.mongodb
+    user = get_user_by_id(db, user_id)
     if not user or not user.get("is_active"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Compte inactif ou introuvable.")
+        return None, (jsonify({"detail": "Compte inactif ou introuvable."}), 401)
 
-    return user
+    return user, None
 
 
-def require_admin(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès réservé aux administrateurs.")
-    return current_user
+def require_auth(f):
+    """Decorator: validates JWT and stores user in g.current_user."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user, error = get_current_user()
+        if error:
+            return error
+        g.current_user = user
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_admin(f):
+    """Decorator: validates JWT and enforces admin role."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user, error = get_current_user()
+        if error:
+            return error
+        if user.get("role") != "admin":
+            return jsonify({"detail": "Accès réservé aux administrateurs."}), 403
+        g.current_user = user
+        return f(*args, **kwargs)
+    return decorated
+
+
+def parse_body(ModelClass):
+    """Parse and validate JSON body against a Pydantic model. Raises APIException on failure."""
+    from pydantic import ValidationError
+    from app.core.exceptions import APIException
+    data = request.get_json(silent=True) or {}
+    try:
+        return ModelClass(**data)
+    except ValidationError as exc:
+        raise APIException(422, str(exc.errors()))
+

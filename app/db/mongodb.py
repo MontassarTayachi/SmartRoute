@@ -1,13 +1,13 @@
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import MongoClient
 
 
 def connect_to_mongo(uri: str, db_name: str):
-    """Create a Motor client and return the client plus the database handle."""
-    client = AsyncIOMotorClient(uri)
+    """Create a PyMongo client and return the client plus the database handle."""
+    client = MongoClient(uri)
     db = client[db_name]
     return client, db
 
 
-async def close_mongo_connection(client: AsyncIOMotorClient):
-    """Close the Motor client connection cleanly."""
+def close_mongo_connection(client: MongoClient) -> None:
+    """Close the PyMongo client connection cleanly."""
     client.close()

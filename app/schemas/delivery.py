@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class DeliveryStatus(str, Enum):
     pending = "pending"
     assigned = "assigned"
+    picked = "picked"
     in_progress = "in_progress"
     delivered = "delivered"
     cancelled = "cancelled"

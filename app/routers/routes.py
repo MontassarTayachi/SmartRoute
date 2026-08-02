@@ -1,31 +1,32 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from flask import Blueprint, current_app, jsonify, request
 
-from app.dependencies import get_current_user
-from app.schemas.route import RouteHistoryItem, RouteOptimizeRequest, RouteOptimizeResponse
+from app.dependencies import parse_body, require_auth
+from app.schemas.route import RouteOptimizeRequest
 from app.services.route_service import get_route_history, optimize_route
 
-router = APIRouter(prefix="/api/v1/routes", tags=["routes"])
+routes_bp = Blueprint("routes", __name__, url_prefix="/api/v1/routes")
 
 
-@router.get("/history", response_model=list[RouteHistoryItem], status_code=status.HTTP_200_OK)
-async def get_routes_history_route(
-    vehicle_id: str | None = None,
-    from_date: datetime | None = Query(None, alias="from"),
-    to_date: datetime | None = Query(None, alias="to"),
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await get_route_history(db, vehicle_id=vehicle_id, from_dt=from_date, to_dt=to_date)
+@routes_bp.route("/history", methods=["GET"])
+@require_auth
+def get_routes_history_route():
+    vehicle_id = request.args.get("vehicle_id")
+    from_str = request.args.get("from")
+    to_str = request.args.get("to")
+
+    from_dt = datetime.fromisoformat(from_str) if from_str else None
+    to_dt = datetime.fromisoformat(to_str) if to_str else None
+
+    db = current_app.mongodb
+    return jsonify(get_route_history(db, vehicle_id=vehicle_id, from_dt=from_dt, to_dt=to_dt)), 200
 
 
-@router.post("/optimiz", response_model=RouteOptimizeResponse, status_code=status.HTTP_200_OK)
-async def optimize_route_route(
-    payload: RouteOptimizeRequest,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await optimize_route(db, delivery_ids=payload.delivery_ids, constraints=payload.constraints)
+@routes_bp.route("/optimiz", methods=["POST"])
+@require_auth
+def optimize_route_route():
+    payload = parse_body(RouteOptimizeRequest)
+    db = current_app.mongodb
+    return jsonify(optimize_route(db, delivery_ids=payload.delivery_ids, constraints=payload.constraints)), 200
+

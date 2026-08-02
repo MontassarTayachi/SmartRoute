@@ -5,17 +5,15 @@ from math import asin, cos, radians, sin, sqrt
 from typing import Any
 
 from bson import ObjectId
-from fastapi import HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.database import Database
 from pymongo.errors import PyMongoError
+
+from app.core.exceptions import APIException
 
 
 def _to_object_id(value: str, *, field_name: str) -> ObjectId:
     if not ObjectId.is_valid(value):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Identifiant {field_name} invalide.",
-        )
+        raise APIException(400, f"Identifiant {field_name} invalide.")
     return ObjectId(value)
 
 
@@ -23,14 +21,13 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     earth_radius_km = 6371.0
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
-
     a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
     c = 2 * asin(sqrt(a))
     return earth_radius_km * c
 
 
-async def get_route_history(
-    db: AsyncIOMotorDatabase,
+def get_route_history(
+    db: Database,
     *,
     vehicle_id: str | None = None,
     from_dt: datetime | None = None,
@@ -49,8 +46,7 @@ async def get_route_history(
             query["timestamp"]["$lte"] = to_dt
 
     try:
-        cursor = db["locations"].find(query).sort("timestamp", 1)
-        docs = await cursor.to_list(length=None)
+        docs = list(db["locations"].find(query).sort("timestamp", 1))
         return [
             {
                 "vehicle_id": str(doc["vehicle_id"]),
@@ -63,53 +59,32 @@ async def get_route_history(
             for doc in docs
         ]
     except PyMongoError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur base de donnees lors de la lecture de l'historique des trajets.",
-        )
+        raise APIException(500, "Erreur base de donnees lors de la lecture de l'historique des trajets.")
 
 
-async def optimize_route(
-    db: AsyncIOMotorDatabase,
-    *,
-    delivery_ids: list[str],
-    constraints: dict[str, Any] | None = None,
-) -> dict:
+def optimize_route(db: Database, *, delivery_ids: list[str], constraints: dict[str, Any] | None = None) -> dict:
     if not delivery_ids:
-        return {
-            "route": [],
-            "distance_km": 0,
-            "estimated_time": 0,
-        }
+        return {"route": [], "distance_km": 0, "estimated_time": 0}
 
     constraints = constraints or {}
 
-    object_ids = []
-    for delivery_id in delivery_ids:
-        object_ids.append(_to_object_id(delivery_id, field_name="livraison"))
+    object_ids = [_to_object_id(did, field_name="livraison") for did in delivery_ids]
 
     try:
-        deliveries = await db["deliveries"].find({"_id": {"$in": object_ids}}).to_list(length=len(object_ids))
+        deliveries = list(db["deliveries"].find({"_id": {"$in": object_ids}}))
     except PyMongoError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur base de donnees pendant l'optimisation d'itineraire.",
-        )
+        raise APIException(500, "Erreur base de donnees pendant l'optimisation d'itineraire.")
 
     if len(deliveries) != len(object_ids):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Une ou plusieurs livraisons sont introuvables.",
-        )
+        raise APIException(404, "Une ou plusieurs livraisons sont introuvables.")
 
-    # First extensible version: simple ordering by priority then schedule.
     deliveries.sort(key=lambda d: (str(d.get("priority", "")), d.get("scheduled_at") or datetime.max))
 
     route: list[dict[str, Any]] = []
     total_distance = 0.0
-
     prev_lat = None
     prev_lng = None
+
     for delivery in deliveries:
         pickup_lat = float(delivery.get("pickup_address_lat"))
         pickup_lng = float(delivery.get("pickup_address_lng"))
@@ -133,7 +108,7 @@ async def optimize_route(
         prev_lat = dropoff_lat
         prev_lng = dropoff_lng
 
-    avg_speed_kmh = float(constraints.get("avg_speed_kmh", 40)) if constraints else 40.0
+    avg_speed_kmh = float(constraints.get("avg_speed_kmh", 40))
     estimated_time_minutes = int((total_distance / avg_speed_kmh) * 60) if avg_speed_kmh > 0 else 0
 
     return {
@@ -141,3 +116,23 @@ async def optimize_route(
         "distance_km": round(total_distance, 2),
         "estimated_time": estimated_time_minutes,
     }
+
+
+
+def _to_object_id(value: str, *, field_name: str) -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Identifiant {field_name} invalide.",
+        )
+    return ObjectId(value)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_km = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * asin(sqrt(a))
+    return earth_radius_km * c

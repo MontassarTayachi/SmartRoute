@@ -1,24 +1,33 @@
-from fastapi import APIRouter, Depends, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from flask import Blueprint, current_app, jsonify, request
 
 from app.services.auth_service import login, refresh_token
-from app.schemas.user import TokenResponse
 
-router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-
-
-@router.post("/login", response_model=TokenResponse)
-async def login_route(form_data: OAuth2PasswordRequestForm = Depends(), request: Request = None):
-    db = request.app.state.mongodb
-    return await login(db, form_data.username, form_data.password)
+auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
+@auth_bp.route("/login", methods=["POST"])
+def login_route():
+    # Accept both form-data and JSON
+    if request.content_type and "application/json" in request.content_type:
+        data = request.get_json(silent=True) or {}
+        username = data.get("username") or data.get("email")
+        password = data.get("password")
+    else:
+        username = request.form.get("username") or request.form.get("email")
+        password = request.form.get("password")
+
+    db = current_app.mongodb
+    result = login(db, username, password)
+    return jsonify(result), 200
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_route(payload: RefreshRequest, request: Request = None):
-    db = request.app.state.mongodb
-    return await refresh_token(db, payload.refresh_token)
+@auth_bp.route("/refresh", methods=["POST"])
+def refresh_route():
+    data = request.get_json(silent=True) or {}
+    refresh_tok = data.get("refresh_token")
+    db = current_app.mongodb
+    result = refresh_token(db, refresh_tok)
+    return jsonify(result), 200
+
+
+

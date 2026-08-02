@@ -1,16 +1,14 @@
-from fastapi import APIRouter, Depends, Request, status
+from flask import Blueprint, current_app, jsonify
 
-from app.dependencies import get_current_user
-from app.schemas.location import LiveVehicleLocationResponse
+from app.dependencies import require_auth
 from app.services.location_service import list_live_vehicle_locations
 
-router = APIRouter(prefix="/api/v1/vehicles", tags=["vehicles"])
+vehicles_live_bp = Blueprint("vehicles_live", __name__, url_prefix="/api/v1/vehicles")
 
 
-@router.get("/live", response_model=list[LiveVehicleLocationResponse], status_code=status.HTTP_200_OK)
-async def list_live_vehicles_route(
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await list_live_vehicle_locations(db)
+@vehicles_live_bp.route("/live", methods=["GET"])
+@require_auth
+def list_live_vehicles_route():
+    db = current_app.mongodb
+    return jsonify(list_live_vehicle_locations(db)), 200
+

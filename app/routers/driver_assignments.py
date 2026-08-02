@@ -1,18 +1,16 @@
-from fastapi import APIRouter, Depends, Request, status
+from flask import Blueprint, current_app, jsonify
 
-from app.dependencies import get_current_user
-from app.schemas.driver import AssignVehicleRequest, DriverResponse
+from app.dependencies import parse_body, require_auth
+from app.schemas.driver import AssignVehicleRequest
 from app.services.driver_service import assign_vehicle_to_driver
 
-router = APIRouter(prefix="/api/v1/drivers", tags=["drivers"])
+driver_assignments_bp = Blueprint("driver_assignments", __name__, url_prefix="/api/v1/drivers")
 
 
-@router.post("/{driver_id}/assign_vehicle", response_model=DriverResponse, status_code=status.HTTP_200_OK)
-async def assign_vehicle_to_driver_route(
-    driver_id: str,
-    payload: AssignVehicleRequest,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await assign_vehicle_to_driver(db, driver_id, payload)
+@driver_assignments_bp.route("/<driver_id>/assign_vehicle", methods=["POST"])
+@require_auth
+def assign_vehicle_to_driver_route(driver_id):
+    payload = parse_body(AssignVehicleRequest)
+    db = current_app.mongodb
+    return jsonify(assign_vehicle_to_driver(db, driver_id, payload)), 200
+

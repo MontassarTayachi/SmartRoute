@@ -1,14 +1,7 @@
-from fastapi import APIRouter, Depends, Query, Request, status
+from flask import Blueprint, current_app, jsonify, request
 
-from app.dependencies import get_current_user
-from app.schemas.delivery import (
-    DeliveryAssignRequest,
-    DeliveryCreate,
-    DeliveryListResponse,
-    DeliveryResponse,
-    DeliveryStatusUpdateRequest,
-    DeliveryUpdate,
-)
+from app.dependencies import parse_body, require_auth
+from app.schemas.delivery import DeliveryAssignRequest, DeliveryCreate, DeliveryStatusUpdateRequest, DeliveryUpdate
 from app.services.delivery_service import (
     assign_delivery,
     create_delivery,
@@ -18,81 +11,55 @@ from app.services.delivery_service import (
     update_delivery_status,
 )
 
-router = APIRouter(prefix="/api/v1/deliveries", tags=["deliveries"])
+deliveries_bp = Blueprint("deliveries", __name__, url_prefix="/api/v1/deliveries")
 
 
-@router.get("/", response_model=DeliveryListResponse, status_code=status.HTTP_200_OK)
-async def list_deliveries_route(
-    status_filter: str | None = Query(None, alias="status"),
-    date: str | None = None,
-    page: int = 1,
-    limit: int = 20,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await list_deliveries(
-        db,
-        page=page,
-        limit=limit,
-        status_filter=status_filter,
-        date_filter=date,
-    )
+@deliveries_bp.route("/", methods=["GET"])
+@require_auth
+def list_deliveries_route():
+    status_filter = request.args.get("status")
+    date = request.args.get("date")
+    page = request.args.get("page", 1, type=int)
+    limit = request.args.get("limit", 20, type=int)
+    db = current_app.mongodb
+    return jsonify(list_deliveries(db, page=page, limit=limit, status_filter=status_filter, date_filter=date)), 200
 
 
-@router.post("/", response_model=DeliveryResponse, status_code=status.HTTP_201_CREATED)
-async def create_delivery_route(
-    payload: DeliveryCreate,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await create_delivery(db, payload)
+@deliveries_bp.route("/", methods=["POST"])
+@require_auth
+def create_delivery_route():
+    payload = parse_body(DeliveryCreate)
+    db = current_app.mongodb
+    return jsonify(create_delivery(db, payload)), 201
 
 
-@router.get("/{delivery_id}", response_model=DeliveryResponse, status_code=status.HTTP_200_OK)
-async def get_delivery_route(
-    delivery_id: str,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await get_delivery_by_id(db, delivery_id)
+@deliveries_bp.route("/<delivery_id>", methods=["GET"])
+@require_auth
+def get_delivery_route(delivery_id):
+    db = current_app.mongodb
+    return jsonify(get_delivery_by_id(db, delivery_id)), 200
 
 
-@router.put("/{delivery_id}", response_model=DeliveryResponse, status_code=status.HTTP_200_OK)
-async def update_delivery_route(
-    delivery_id: str,
-    payload: DeliveryUpdate,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await update_delivery(db, delivery_id, payload)
+@deliveries_bp.route("/<delivery_id>", methods=["PUT"])
+@require_auth
+def update_delivery_route(delivery_id):
+    payload = parse_body(DeliveryUpdate)
+    db = current_app.mongodb
+    return jsonify(update_delivery(db, delivery_id, payload)), 200
 
 
-@router.post("/{delivery_id}/assign", response_model=DeliveryResponse, status_code=status.HTTP_200_OK)
-async def assign_delivery_route(
-    delivery_id: str,
-    payload: DeliveryAssignRequest,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await assign_delivery(
-        db,
-        delivery_id,
-        vehicle_id=payload.vehicle_id,
-        driver_id=payload.driver_id,
-    )
+@deliveries_bp.route("/<delivery_id>/assign", methods=["POST"])
+@require_auth
+def assign_delivery_route(delivery_id):
+    payload = parse_body(DeliveryAssignRequest)
+    db = current_app.mongodb
+    return jsonify(assign_delivery(db, delivery_id, vehicle_id=payload.vehicle_id, driver_id=payload.driver_id)), 200
 
 
-@router.post("/{delivery_id}/status", response_model=DeliveryResponse, status_code=status.HTTP_200_OK)
-async def update_delivery_status_route(
-    delivery_id: str,
-    payload: DeliveryStatusUpdateRequest,
-    request: Request = None,
-    current_user: dict = Depends(get_current_user),
-):
-    db = request.app.state.mongodb
-    return await update_delivery_status(db, delivery_id, payload.status.value)
+@deliveries_bp.route("/<delivery_id>/status", methods=["POST"])
+@require_auth
+def update_delivery_status_route(delivery_id):
+    payload = parse_body(DeliveryStatusUpdateRequest)
+    db = current_app.mongodb
+    return jsonify(update_delivery_status(db, delivery_id, payload.status.value)), 200
+

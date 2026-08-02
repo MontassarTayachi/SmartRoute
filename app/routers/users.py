@@ -1,52 +1,67 @@
-from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
+from flask import Blueprint, current_app, g, jsonify, request
 
-from app.dependencies import get_current_user, require_admin
-from app.schemas.user import DriverUserCreate, UserCreate, UserResponse, UserUpdate
-from app.services.user_service import create_driver_user_account, create_user, delete_user, get_user_by_id, list_users, update_user
+from app.dependencies import parse_body, require_admin, require_auth
+from app.schemas.user import DriverUserCreate, UserCreate, UserUpdate
+from app.services.user_service import (
+    create_driver_user_account,
+    create_user,
+    delete_user,
+    get_user_by_id,
+    list_users,
+    update_user,
+)
 
-router = APIRouter(prefix="/api/v1/users", tags=["users"])
-
-
-@router.get("/", response_model=dict)
-async def get_users(page: int = 1, size: int = 10, role: str | None = None, request: Request = None, current_user: dict = Depends(get_current_user)):
-    db = request.app.state.mongodb
-    return await list_users(db, page=page, size=size, role=role)
-
-
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user_route(payload: UserCreate, request: Request = None, current_user: dict = Depends(require_admin)):
-    db = request.app.state.mongodb
-    return await create_user(db, payload)
+users_bp = Blueprint("users", __name__, url_prefix="/api/v1/users")
 
 
-@router.post("/driver-account", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_driver_user_account_route(
-    payload: DriverUserCreate,
-    request: Request = None,
-    current_user: dict = Depends(require_admin),
-):
-    db = request.app.state.mongodb
-    return await create_driver_user_account(db, payload)
+@users_bp.route("/", methods=["GET"])
+@require_auth
+def get_users():
+    page = request.args.get("page", 1, type=int)
+    size = request.args.get("size", 10, type=int)
+    role = request.args.get("role")
+    db = current_app.mongodb
+    return jsonify(list_users(db, page=page, size=size, role=role)), 200
 
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: str, request: Request = None, current_user: dict = Depends(get_current_user)):
-    db = request.app.state.mongodb
-    user = await get_user_by_id(db, user_id)
+@users_bp.route("/", methods=["POST"])
+@require_admin
+def create_user_route():
+    payload = parse_body(UserCreate)
+    db = current_app.mongodb
+    return jsonify(create_user(db, payload)), 201
+
+
+@users_bp.route("/driver-account", methods=["POST"])
+@require_admin
+def create_driver_user_account_route():
+    payload = parse_body(DriverUserCreate)
+    db = current_app.mongodb
+    return jsonify(create_driver_user_account(db, payload)), 201
+
+
+@users_bp.route("/<user_id>", methods=["GET"])
+@require_auth
+def get_user(user_id):
+    db = current_app.mongodb
+    user = get_user_by_id(db, user_id)
     if not user:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "Utilisateur introuvable."})
-    return user
+        return jsonify({"detail": "Utilisateur introuvable."}), 404
+    return jsonify(user), 200
 
 
-@router.put("/{user_id}", response_model=UserResponse)
-async def update_user_route(user_id: str, payload: UserUpdate, request: Request = None, current_user: dict = Depends(require_admin)):
-    db = request.app.state.mongodb
-    return await update_user(db, user_id, payload)
+@users_bp.route("/<user_id>", methods=["PUT"])
+@require_admin
+def update_user_route(user_id):
+    payload = parse_body(UserUpdate)
+    db = current_app.mongodb
+    return jsonify(update_user(db, user_id, payload)), 200
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user_route(user_id: str, request: Request = None, current_user: dict = Depends(require_admin)):
-    db = request.app.state.mongodb
-    await delete_user(db, user_id)
+@users_bp.route("/<user_id>", methods=["DELETE"])
+@require_admin
+def delete_user_route(user_id):
+    db = current_app.mongodb
+    delete_user(db, user_id)
+    return "", 204
 
