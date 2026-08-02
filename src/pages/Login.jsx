@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 const roleToPath = {
   ADMIN: '/admin/dashboard',
   MANAGER: '/manager/dashboard',
-  DRIVER: '/driver/dashboard',
+  DRIVER: '/driver/profile',
 };
 
 const Login = () => {

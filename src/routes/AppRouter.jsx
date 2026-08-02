@@ -5,6 +5,7 @@ import DriverLayout from '../layouts/DriverLayout';
 import ManagerLayout from '../layouts/ManagerLayout';
 import DashboardPage from '../pages/DashboardPage';
 import DriversPage from '../pages/DriversPage';
+import DriverProfilePage from '../pages/DriverProfilePage';
 import Login from '../pages/Login';
 import NotFound from '../pages/NotFound';
 import Unauthorized from '../pages/Unauthorized';
@@ -15,7 +16,7 @@ import UsersPage from '../pages/UsersPage';
 import VehiclesPage from '../pages/VehiclesPage';
 import DriverTrackingPage from '../pages/DriverTrackingPage';
 import VehicleTrackingPage from '../pages/VehicleTrackingPage';
-
+import DriverMissionPage from '../pages/DriverMissionPage'
 const AppRouter = () => (
   <Routes>
     <Route path="/login" element={<Login />} />
@@ -35,6 +36,9 @@ const AppRouter = () => (
       <Route path="vehicles" element={<VehiclesPage />} />
       <Route path="vehicle-tracking" element={<VehicleTrackingPage />} />
       <Route path="drivers" element={<DriversPage />} />
+      <Route path="deliveries" element={<DeliveriesPage />} />
+      <Route path="deliveries/new" element={<CreateDeliveryPage />} />
+      <Route path="deliveries/:id" element={<DeliveryDetailsPage />} />
       <Route path="settings" element={<DashboardPage title="Paramètres" description="Configuration de la plateforme." />} />
     
     </Route>
@@ -55,7 +59,7 @@ const AppRouter = () => (
       <Route path="deliveries/new" element={<CreateDeliveryPage />} />
       <Route path="deliveries/:id" element={<DeliveryDetailsPage />} />
     </Route>
-
+xsx
     <Route
       path="/driver"
       element={
@@ -64,11 +68,10 @@ const AppRouter = () => (
         </ProtectedRoute>
       }
     >
-      <Route index element={<Navigate to="dashboard" replace />} />
-      <Route path="dashboard" element={<DashboardPage title="Dashboard conducteur" description="Vue de mission et statut personnel." />} />
-      <Route path="profile" element={<DashboardPage title="Profil conducteur" description="Fiche personnelle du conducteur." />} />
+      <Route index element={<DriverMissionPage to="missions" replace />} />
+      <Route path="profile" element={<DriverProfilePage />} />
       <Route path="tracking" element={<DriverTrackingPage />} />
-      <Route path="missions" element={<DashboardPage title="Missions" description="Module à prévoir pour la suite du projet." />} />
+      <Route path="missions" element={<DriverMissionPage/>} />
     </Route>
 
     <Route path="/" element={<Navigate to="/login" replace />} />

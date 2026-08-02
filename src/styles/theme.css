@@ -1,6 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700&family=Space+Grotesk:wght@600;700&display=swap');
-
-/* ================================================================
+﻿/* ================================================================
    RESET & BASE
    ================================================================ */
 *, *::before, *::after { box-sizing: border-box; }
@@ -1113,4 +1111,14 @@ select option { background: var(--bg-elevated); color: var(--text-1); }
 
 .table-actions-dropdown button:hover {
 	background: #f5f5f5;
+}
+.leaflet-container {
+  z-index: 1;
+}
+
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom,
+.leaflet-control {
+  z-index: 1 !important;
 }

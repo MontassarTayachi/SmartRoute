@@ -2,7 +2,6 @@ import { Outlet } from 'react-router-dom';
 import RoleLayout from './RoleLayout';
 
 const items = [
-  { to: '/driver/dashboard', label: 'Dashboard', end: true },
   { to: '/driver/profile', label: 'Profil' },
   { to: '/driver/tracking', label: 'Suivi GPS' },
   { to: '/driver/missions', label: 'Missions' },

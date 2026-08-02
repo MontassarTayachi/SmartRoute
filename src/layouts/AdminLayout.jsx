@@ -4,6 +4,7 @@ import RoleLayout from './RoleLayout';
 const items = [
   { to: '/admin/dashboard', label: 'Dashboard', end: true },
   { to: '/admin/users', label: 'Utilisateurs' },
+   { to: '/admin/deliveries', label: 'Livraisons' },
   { to: '/admin/vehicles', label: 'Véhicules' },
   { to: '/admin/vehicle-tracking', label: 'Suivi véhicules' },
   { to: '/admin/drivers', label: 'Conducteurs' },
