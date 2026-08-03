@@ -18,11 +18,25 @@ Le processus se base principalement sur les classes suivantes :
 - `DriverAssignmentService` pour l'affectation des conducteurs aux régions,
 - `CapacityOptimizer` pour la répartition des livraisons par capacité,
 - `NearestNeighborOptimizer` pour l'optimisation locale de l'itinéraire,
+- `RouteRefiner` pour le post-traitement `2-opt` / `Or-opt`,
 - `OSMRoutingService` pour le calcul du trajet réel.
+
+## 2. Comment l'algorithme fonctionne en pratique
+
+L'algorithme fonctionne comme une chaîne de décisions successives :
+
+1. Il lit les livraisons prévues pour une journée et récupère les chauffeurs et véhicules disponibles.
+2. Il découpe les livraisons en groupes géographiques proches, afin d'éviter de traiter toutes les commandes comme un seul gros bloc.
+3. Il associe chaque conducteur à la région la plus proche de sa position actuelle.
+4. Il répartit ensuite les livraisons entre les véhicules disponibles selon leur capacité restante.
+5. Pour chaque véhicule/conducteur, il construit un ordre logique de passage afin d'éviter les détours et de respecter l'ordre pickup → delivery.
+6. Enfin, il calcule la distance totale et la durée estimée, puis peut demander un trajet routier réel via OSRM.
+
+Autrement dit, l'algorithme ne "résout" pas tout d'un coup. Il travaille par étapes, de façon progressive, pour produire une solution rapide, cohérente et exploitable.
 
 ---
 
-## 2. Flux complet de l'optimisation
+## 3. Flux complet de l'optimisation
 
 ### Étape 1 - Récupération des livraisons
 
@@ -45,6 +59,8 @@ Le service de clustering construit un point représentatif pour chaque livraison
 
 Puis, il applique `KMeans` sur ces points afin de former des régions géographiques.
 
+Le nombre de régions n'est plus figé dans le code. Il est lu depuis `region_settings` en base, avec un mode `fixe` ou `auto`.
+
 Le résultat est un dictionnaire :
 
 - `region_id -> liste des livraisons`
@@ -56,6 +72,12 @@ Cela permet de découper le volume de travail par zone plutôt que de traiter to
 La méthode `get_cluster_centers()` renvoie les centres de gravité des clusters calculés par K-Means.
 
 Ces centres servent ensuite à attribuer les chauffeurs aux zones les plus proches.
+
+À la fin du clustering, le service persiste aussi `region_geometry` avec :
+
+- `center_lat`, `center_lng`,
+- `radius_km` calculé à partir des points du cluster,
+- `computed_at`.
 
 ### Étape 4 - Affectation des chauffeurs aux régions
 
@@ -106,6 +128,10 @@ Une règle de contrainte importante est respectée :
 
 Cela évite un ordre logique invalide (livraison avant ramassage).
 
+Après cette étape, `RouteRefiner` applique successivement `2-opt` puis `Or-opt` pour réduire les croisements et les détours locaux.
+
+À chaque échange testé, la contrainte pickup/delivery est réévaluée. Tout mouvement qui viole l'ordre est rejeté, même s'il réduit la distance.
+
 ### Étape 7 - Calcul de la distance totale et durée estimée
 
 La distance totale est calculée en sommant les distances entre chaque étape successive.
@@ -126,7 +152,49 @@ Si l'appel OSRM échoue, le système revient sur un calcul de secours basé sur 
 
 ---
 
-## 3. Algorithme en pseudo-code
+## 7. Paramétrage administrateur et géométrie
+
+### Réglages des régions
+
+- `GET /api/admin/optimization/region-settings`
+- `PUT /api/admin/optimization/region-settings`
+
+Payload `PUT` :
+
+```json
+{
+    "n_clusters": 5,
+    "mode": "fixe"
+}
+```
+
+Réponse : le document stocké en base, avec `updated_at` et `updated_by`.
+
+### Algorithmes d'affectation
+
+- `GET /api/admin/optimization/algorithms`
+- `POST /api/admin/optimization/algorithms/activate`
+
+Payload `POST` :
+
+```json
+{
+    "algorithm_name": "balanced_load",
+    "parameters": {}
+}
+```
+
+Réponse : le document activé dans `algorithm_settings`.
+
+### Géométrie des régions
+
+- `GET /api/regions/geometry`
+
+Réponse GeoJSON : `FeatureCollection` de points, avec `radius_km` en propriété pour dessiner les cercles côté client.
+
+---
+
+## 4. Algorithme en pseudo-code
 
 ### Clustering
 
@@ -172,7 +240,7 @@ while unvisited_steps:
 
 ---
 
-## 4. Ce que l'algorithme optimise réellement
+## 5. Ce que l'algorithme optimise réellement
 
 L'optimisation cherche à réduire le coût global de la mission selon trois dimensions :
 
@@ -189,7 +257,7 @@ En pratique, il s'agit d'un schéma hybride :
 
 ---
 
-## 5. Limites connues
+## 6. Limites connues
 
 L'algorithme est pratique et rapide, mais il reste heuristique :
 
@@ -202,7 +270,7 @@ En revanche, il est bien adapté aux cas où il faut générer une solution coh�
 
 ---
 
-## 6. Résultat final
+## 7. Résultat final
 
 À la fin du processus, le système produit une mission contenant :
 

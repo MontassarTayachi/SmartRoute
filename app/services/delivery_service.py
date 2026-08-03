@@ -91,11 +91,8 @@ def list_deliveries(
     limit: int = 20,
     status_filter: str | None = None,
     date_filter: str | None = None,
+    paginate: bool = True,
 ) -> dict:
-    page = max(page, 1)
-    limit = max(limit, 1)
-    skip = (page - 1) * limit
-
     query: dict = {}
     if status_filter:
         if status_filter not in ALLOWED_DELIVERY_STATUSES:
@@ -107,10 +104,18 @@ def list_deliveries(
         query["scheduled_at"] = {"$gte": start_of_day, "$lt": end_of_day}
 
     try:
-        docs = list(db["deliveries"].find(query).sort("created_at", -1).skip(skip).limit(limit))
-        items = [_format_delivery(doc) for doc in docs]
-        total = db["deliveries"].count_documents(query)
-        return {"items": items, "total": total, "page": page, "limit": limit}
+        if paginate:
+            page = max(page, 1)
+            limit = max(limit, 1)
+            skip = (page - 1) * limit
+            docs = list(db["deliveries"].find(query).sort("created_at", -1).skip(skip).limit(limit))
+            items = [_format_delivery(doc) for doc in docs]
+            total = db["deliveries"].count_documents(query)
+            return {"items": items, "total": total, "page": page, "limit": limit}
+        else:
+            docs = list(db["deliveries"].find(query).sort("created_at", -1))
+            items = [_format_delivery(doc) for doc in docs]
+            return {"items": items}
     except PyMongoError:
         raise APIException(500, "Erreur base de donnees lors de la lecture des livraisons.")
 

@@ -29,6 +29,23 @@ def _serialize_mission(mission: dict) -> dict:
         for step in m["deliveries_order"]:
             if "delivery_id" in step:
                 step["delivery_id"] = str(step["delivery_id"])
+    # Serialize driver and vehicle objects if present
+    if "driver" in m and m["driver"]:
+        driver = m["driver"].copy()
+        if "_id" in driver:
+            driver["_id"] = str(driver["_id"])
+        if "assigned_vehicle_id" in driver and driver["assigned_vehicle_id"]:
+            driver["assigned_vehicle_id"] = str(driver["assigned_vehicle_id"])
+        if "login_user_id" in driver and driver["login_user_id"]:
+            driver["login_user_id"] = str(driver["login_user_id"])
+        m["driver"] = driver
+    if "vehicle" in m and m["vehicle"]:
+        vehicle = m["vehicle"].copy()
+        if "_id" in vehicle:
+            vehicle["_id"] = str(vehicle["_id"])
+        if "vehicle_list_id" in vehicle and vehicle["vehicle_list_id"]:
+            vehicle["vehicle_list_id"] = str(vehicle["vehicle_list_id"])
+        m["vehicle"] = vehicle
     return m
 
 
@@ -40,7 +57,7 @@ class MissionService:
         self.clustering_service = None
         self.driver_assignment_service = DriverAssignmentService()
         self.route_optimizer = RouteOptimizerService()
-        self.capacity_optimizer = CapacityOptimizer()
+        self.capacity_optimizer = CapacityOptimizer(self.db)
         self.osm_routing_service = OSMRoutingService()
 
     def generate_missions_for_date(self, target_date: datetime | None = None) -> list[dict[str, Any]]:
@@ -64,8 +81,7 @@ class MissionService:
             logger.warning("No available vehicles found")
             return []
 
-        n_clusters = max(1, min(5, len(drivers)))
-        self.clustering_service = ClusteringService(n_clusters=n_clusters)
+        self.clustering_service = ClusteringService(db=self.db, driver_count=len(drivers))
 
         region_deliveries = self.clustering_service.cluster_deliveries(deliveries)
         region_centers = self.clustering_service.get_region_centers()
@@ -189,12 +205,38 @@ class MissionService:
             "updated_at": mission.updated_at,
         }
 
+    def _mark_deliveries_as_assigned(self, delivery_ids: list[Any], driver_id: Any, vehicle_id: Any) -> None:
+        for delivery_id in delivery_ids or []:
+            normalized_delivery_id = delivery_id
+            if isinstance(delivery_id, str):
+                try:
+                    normalized_delivery_id = ObjectId(delivery_id)
+                except Exception:
+                    normalized_delivery_id = delivery_id
+
+            self.db.deliveries.update_one(
+                {"_id": normalized_delivery_id},
+                {
+                    "$set": {
+                        "status": "assigned",
+                        "driver_id": driver_id,
+                        "vehicle_id": vehicle_id,
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+
     def _save_mission(self, mission_dict: dict[str, Any]) -> dict[str, Any] | None:
         try:
             mission_dict.pop("_id", None)
             result = self.db.missions.insert_one(mission_dict)
             if result.inserted_id:
                 mission_dict["_id"] = str(result.inserted_id)
+                self._mark_deliveries_as_assigned(
+                    delivery_ids=mission_dict.get("delivery_ids", []),
+                    driver_id=mission_dict.get("driver_id"),
+                    vehicle_id=mission_dict.get("vehicle_id"),
+                )
                 logger.info(f"Saved mission {result.inserted_id}")
                 return mission_dict
         except Exception as e:
@@ -206,6 +248,18 @@ class MissionService:
         end_of_day = start_of_day + timedelta(days=1)
 
         missions = list(self.db.missions.find({"created_at": {"$gte": start_of_day, "$lt": end_of_day}}))
+        
+        # Load driver and vehicle information for each mission
+        for mission in missions:
+            if mission.get("driver_id"):
+                driver = self.db.drivers.find_one({"_id": mission["driver_id"]})
+                if driver:
+                    mission["driver"] = driver
+            if mission.get("vehicle_id"):
+                vehicle = self.db.vehicles.find_one({"_id": mission["vehicle_id"]})
+                if vehicle:
+                    mission["vehicle"] = vehicle
+        
         return [_serialize_mission(m) for m in missions]
 
     def get_missions_for_driver_today(self, driver_id: str) -> list[dict[str, Any]]:

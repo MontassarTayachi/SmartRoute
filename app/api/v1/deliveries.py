@@ -27,6 +27,7 @@ async def list_deliveries_route(
     date: str | None = None,
     page: int = 1,
     limit: int = 20,
+    paginate: bool = True,
     request: Request = None,
     current_user: dict = Depends(get_current_user),
 ):
@@ -37,6 +38,7 @@ async def list_deliveries_route(
         limit=limit,
         status_filter=status_filter,
         date_filter=date,
+        paginate=paginate,
     )
 
 

@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.algorithms.nearest_neighbor import NearestNeighborOptimizer
+from app.algorithms.route_refiner import RouteRefiner
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,46 @@ class RouteOptimizerService:
     def __init__(self):
         """Initialize route optimizer service."""
         self.nn_optimizer = NearestNeighborOptimizer()
+        self.route_refiner = RouteRefiner(max_iterations=100)
+
+    @staticmethod
+    def _build_distance_matrix(
+        steps: list[dict[str, Any]],
+        start_location: tuple[float, float] | None = None,
+    ) -> list[list[float]]:
+        matrix_steps = []
+        if start_location is not None:
+            matrix_steps.append({"lat": start_location[0], "lng": start_location[1]})
+        matrix_steps.extend(steps)
+
+        matrix: list[list[float]] = []
+        for source in matrix_steps:
+            row = []
+            for target in matrix_steps:
+                row.append(
+                    NearestNeighborOptimizer.haversine_distance(
+                        source["lat"],
+                        source["lng"],
+                        target["lat"],
+                        target["lng"],
+                    )
+                )
+            matrix.append(row)
+
+        return matrix
+
+    @staticmethod
+    def _annotate_steps_for_refinement(
+        steps: list[dict[str, Any]],
+        start_location: tuple[float, float] | None = None,
+    ) -> list[dict[str, Any]]:
+        offset = 1 if start_location is not None else 0
+        annotated_steps = []
+        for index, step in enumerate(steps):
+            step_copy = step.copy()
+            step_copy["_matrix_index"] = index + offset
+            annotated_steps.append(step_copy)
+        return annotated_steps
 
     def optimize_mission_route(
         self,
@@ -48,7 +89,7 @@ class RouteOptimizerService:
             dropoff_lng = delivery.get("dropoff_address_lng")
             dropoff_address = delivery.get("dropoff_address")
 
-            if pickup_lat and pickup_lng:
+            if pickup_lat is not None and pickup_lng is not None:
                 steps.append(
                     {
                         "delivery_id": delivery_id,
@@ -59,7 +100,7 @@ class RouteOptimizerService:
                     }
                 )
 
-            if dropoff_lat and dropoff_lng:
+            if dropoff_lat is not None and dropoff_lng is not None:
                 steps.append(
                     {
                         "delivery_id": delivery_id,
@@ -72,18 +113,42 @@ class RouteOptimizerService:
 
         # Optimize route using nearest neighbor
         optimized_steps = self.nn_optimizer.optimize_route(steps, start_location)
-
-        # Calculate total distance
-        total_distance = self.nn_optimizer.calculate_total_distance(
+        before_refinement_distance = self.nn_optimizer.calculate_total_distance(
             optimized_steps, start_location
         )
+
+        distance_matrix = self._build_distance_matrix(optimized_steps, start_location)
+        refinement_input = self._annotate_steps_for_refinement(optimized_steps, start_location)
+        refined_steps = self.route_refiner.two_opt(refinement_input, distance_matrix)
+        refined_steps = self.route_refiner.or_opt(refined_steps, distance_matrix)
+        for step in refined_steps:
+            step.pop("_matrix_index", None)
+        after_refinement_distance = self.nn_optimizer.calculate_total_distance(
+            refined_steps, start_location
+        )
+
+        if after_refinement_distance + 1e-9 < before_refinement_distance:
+            logger.info(
+                "Route refinement improved distance from %.2fkm to %.2fkm (gain %.2fkm)",
+                before_refinement_distance,
+                after_refinement_distance,
+                before_refinement_distance - after_refinement_distance,
+            )
+        else:
+            logger.info(
+                "Route refinement completed with no distance gain (%.2fkm)",
+                after_refinement_distance,
+            )
+
+        # Calculate total distance
+        total_distance = after_refinement_distance
 
         # Estimate duration (assuming average speed of 30 km/h in urban areas)
         avg_speed_kmh = 30.0
         estimated_duration_seconds = int((total_distance / avg_speed_kmh) * 3600)
 
         # Add order to steps
-        for order, step in enumerate(optimized_steps):
+        for order, step in enumerate(refined_steps):
             step["order"] = order
 
         logger.info(
@@ -92,7 +157,7 @@ class RouteOptimizerService:
         )
 
         return {
-            "steps": optimized_steps,
+            "steps": refined_steps,
             "total_distance": total_distance,
             "estimated_duration": estimated_duration_seconds,
         }

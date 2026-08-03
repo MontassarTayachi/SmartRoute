@@ -22,8 +22,9 @@ def get_drivers():
     availability = request.args.get("availability")
     page = request.args.get("page", 1, type=int)
     size = request.args.get("size", 10, type=int)
+    paginate = request.args.get("paginate", "true").lower() == "true"
     db = current_app.mongodb
-    return jsonify(list_drivers(db, page=page, size=size, availability=availability)), 200
+    return jsonify(list_drivers(db, page=page, size=size, availability=availability, paginate=paginate)), 200
 
 
 @drivers_bp.route("/without-user-account", methods=["GET"])

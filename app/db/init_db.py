@@ -255,6 +255,53 @@ def _vehicle_liste_validator() -> dict:
     }
 
 
+def _region_settings_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["n_clusters", "mode", "updated_at"],
+            "properties": {
+                "n_clusters": {"bsonType": "int", "minimum": 1, "description": "Nombre de regions à générer."},
+                "mode": {"enum": ["fixe", "auto"], "description": "Mode de calcul du nombre de regions."},
+                "updated_by": {"bsonType": ["objectId", "null"], "description": "Utilisateur ayant modifié le paramétrage."},
+                "updated_at": {"bsonType": "date", "description": "Date de mise à jour du paramétrage."},
+            },
+        }
+    }
+
+
+def _region_geometry_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["region_id", "center_lat", "center_lng", "radius_km", "computed_at"],
+            "properties": {
+                "region_id": {"bsonType": "int", "minimum": 0, "description": "Identifiant de la region."},
+                "center_lat": {"bsonType": ["double", "int"], "description": "Latitude du centre de region."},
+                "center_lng": {"bsonType": ["double", "int"], "description": "Longitude du centre de region."},
+                "radius_km": {"bsonType": ["double", "int"], "minimum": 0, "description": "Rayon de la region en kilomètres."},
+                "computed_at": {"bsonType": "date", "description": "Date de calcul des geometries."},
+            },
+        }
+    }
+
+
+def _algorithm_settings_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["algorithm_name", "is_active", "parameters", "updated_at"],
+            "properties": {
+                "algorithm_name": {"bsonType": "string", "description": "Nom de l'algorithme d'affectation."},
+                "is_active": {"bsonType": "bool", "description": "Indique si l'algorithme est actif."},
+                "parameters": {"bsonType": "object", "description": "Paramètres JSON spécifiques à l'algorithme."},
+                "updated_by": {"bsonType": ["objectId", "null"], "description": "Utilisateur ayant modifié l'algorithme."},
+                "updated_at": {"bsonType": "date", "description": "Date de mise à jour de l'algorithme."},
+            },
+        }
+    }
+
+
 def initialize_database(mongo_uri: str, db_name: str):
     """Initialize the smartRoute database with all collections, validators and indexes."""
     client = MongoClient(mongo_uri)
@@ -336,6 +383,29 @@ def initialize_database(mongo_uri: str, db_name: str):
                 ([("nom", ASCENDING)], {"name": "idx_nom"}),
             ],
         ),
+        (
+            "region_settings",
+            _region_settings_validator(),
+            [
+                ([("updated_at", ASCENDING)], {"name": "idx_region_settings_updated_at"}),
+            ],
+        ),
+        (
+            "region_geometry",
+            _region_geometry_validator(),
+            [
+                ([("region_id", ASCENDING)], {"name": "unique_region_geometry_region_id", "unique": True}),
+                ([("computed_at", ASCENDING)], {"name": "idx_region_geometry_computed_at"}),
+            ],
+        ),
+        (
+            "algorithm_settings",
+            _algorithm_settings_validator(),
+            [
+                ([("algorithm_name", ASCENDING)], {"name": "unique_algorithm_name", "unique": True}),
+                ([("is_active", ASCENDING)], {"name": "idx_algorithm_active"}),
+            ],
+        ),
     ]
 
     for name, validator, indexes in collections:
@@ -344,6 +414,33 @@ def initialize_database(mongo_uri: str, db_name: str):
         except CollectionInvalid:
             db.create_collection(name)
             _create_collection_with_validator(db, name, validator, indexes)
+
+    now = datetime.utcnow()
+    if db.region_settings.count_documents({}) == 0:
+        db.region_settings.insert_one({
+            "n_clusters": 5,
+            "mode": "fixe",
+            "updated_by": None,
+            "updated_at": now,
+        })
+
+    if db.algorithm_settings.count_documents({}) == 0:
+        db.algorithm_settings.insert_many([
+            {
+                "algorithm_name": "greedy_capacity",
+                "is_active": True,
+                "parameters": {},
+                "updated_by": None,
+                "updated_at": now,
+            },
+            {
+                "algorithm_name": "balanced_load",
+                "is_active": False,
+                "parameters": {},
+                "updated_by": None,
+                "updated_at": now,
+            },
+        ])
 
     # Optionally create an admin user placeholder if none exists.
     client.close()

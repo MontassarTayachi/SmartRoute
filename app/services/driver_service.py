@@ -156,16 +156,21 @@ def create_driver(db: Database, payload: DriverCreate) -> dict:
         raise APIException(409, "Un conducteur avec ce numéro de permis existe déjà.")
 
 
-def list_drivers(db: Database, page: int = 1, size: int = 10, availability: str | None = None) -> dict:
-    skip = max(page - 1, 0) * size
+def list_drivers(db: Database, page: int = 1, size: int = 10, availability: str | None = None, paginate: bool = True) -> dict:
     query = {}
     if availability:
         query["availability"] = availability
 
-    drivers = list(db["drivers"].find(query).skip(skip).limit(size))
-    items = _format_drivers_with_assignments(db, drivers)
-    total = db["drivers"].count_documents(query)
-    return {"items": items, "total": total, "page": page, "size": size}
+    if paginate:
+        skip = max(page - 1, 0) * size
+        drivers = list(db["drivers"].find(query).skip(skip).limit(size))
+        items = _format_drivers_with_assignments(db, drivers)
+        total = db["drivers"].count_documents(query)
+        return {"items": items, "total": total, "page": page, "size": size}
+    else:
+        drivers = list(db["drivers"].find(query))
+        items = _format_drivers_with_assignments(db, drivers)
+        return {"items": items}
 
 
 def list_drivers_without_user_account(

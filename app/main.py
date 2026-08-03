@@ -14,6 +14,12 @@ from app.db.init_db import initialize_database
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.socket_manager import socketio
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 
 class SmartRouteJSONProvider(DefaultJSONProvider):
     """Custom JSON provider that handles datetime and ObjectId serialization."""
@@ -72,6 +78,8 @@ def create_app() -> Flask:
     from app.routers.locations import locations_bp
     from app.routers.routes import routes_bp
     from app.routers.driver_assignments import driver_assignments_bp
+    from app.routers.admin_optimization import admin_optimization_bp
+    from app.routers.regions import regions_bp
     from app.routers.vehicles_live import vehicles_live_bp
     from app.routers.tracking import tracking_bp
     from app.routers.vehicles import vehicles_bp
@@ -85,6 +93,8 @@ def create_app() -> Flask:
     app.register_blueprint(locations_bp)
     app.register_blueprint(routes_bp)
     app.register_blueprint(driver_assignments_bp)
+    app.register_blueprint(admin_optimization_bp)
+    app.register_blueprint(regions_bp)
     app.register_blueprint(vehicles_live_bp)
     app.register_blueprint(tracking_bp)
     app.register_blueprint(vehicles_bp)

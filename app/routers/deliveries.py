@@ -21,8 +21,9 @@ def list_deliveries_route():
     date = request.args.get("date")
     page = request.args.get("page", 1, type=int)
     limit = request.args.get("limit", 20, type=int)
+    paginate = request.args.get("paginate", "true").lower() == "true"
     db = current_app.mongodb
-    return jsonify(list_deliveries(db, page=page, limit=limit, status_filter=status_filter, date_filter=date)), 200
+    return jsonify(list_deliveries(db, page=page, limit=limit, status_filter=status_filter, date_filter=date, paginate=paginate)), 200
 
 
 @deliveries_bp.route("/", methods=["POST"])

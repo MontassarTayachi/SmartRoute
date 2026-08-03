@@ -1,11 +1,34 @@
 import logging
 from typing import Any
 
+from app.algorithms.assignment_algorithms import (
+    BalancedLoadAlgorithm,
+    GreedyCapacityAlgorithm,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class CapacityOptimizer:
     """Optimizer for vehicle capacity constraints in delivery assignment."""
+
+    def __init__(self, db=None, algorithm_name: str | None = None, algorithm_parameters: dict[str, Any] | None = None):
+        self.db = db
+        self.algorithm_name = algorithm_name
+        self.algorithm_parameters = algorithm_parameters or {}
+
+    def _resolve_algorithm(self):
+        if self.algorithm_name == GreedyCapacityAlgorithm.algorithm_name:
+            return GreedyCapacityAlgorithm(self.algorithm_parameters)
+        if self.algorithm_name == BalancedLoadAlgorithm.algorithm_name:
+            return BalancedLoadAlgorithm(self.algorithm_parameters)
+
+        if self.db is not None:
+            from app.services.optimization_settings_service import OptimizationSettingsService
+
+            return OptimizationSettingsService(self.db).resolve_assignment_algorithm()
+
+        return GreedyCapacityAlgorithm()
 
     def assign_deliveries_to_vehicles(
         self,
@@ -28,62 +51,8 @@ class CapacityOptimizer:
             logger.warning("Missing data for capacity optimization")
             return []
 
-        # Pair drivers with vehicles (assuming each driver has a vehicle)
-        driver_vehicle_pairs = []
-        for driver in drivers:
-            vehicle_id = driver.get("assigned_vehicle_id")
-            if vehicle_id:
-                vehicle = next((v for v in vehicles if v.get("_id") == vehicle_id or v.get("id") == vehicle_id), None)
-                if vehicle:
-                    driver_vehicle_pairs.append(
-                        {"driver_id": driver.get("_id", driver.get("id")), "vehicle_id": vehicle_id, "vehicle": vehicle}
-                    )
-
-        if not driver_vehicle_pairs:
-            logger.warning("No driver-vehicle pairs found")
-            return []
-
-        # Sort deliveries by weight (heavier first for better packing)
-        sorted_deliveries = sorted(deliveries, key=lambda d: d.get("weight_kg", 0), reverse=True)
-
-        assignments = []
-        for pair in driver_vehicle_pairs:
-            assignments.append(
-                {
-                    "driver_id": pair["driver_id"],
-                    "vehicle_id": pair["vehicle_id"],
-                    "vehicle": pair["vehicle"],
-                    "deliveries": [],
-                    "total_weight": 0.0,
-                }
-            )
-
-        # Assign deliveries using a greedy approach
-        for delivery in sorted_deliveries:
-            delivery_weight = delivery.get("weight_kg", 0)
-            best_assignment = None
-            best_remaining_capacity = float("inf")
-
-            # Find the vehicle with the best remaining capacity
-            for assignment in assignments:
-                vehicle_capacity = assignment["vehicle"].get("capacity_kg", 0)
-                current_weight = assignment["total_weight"]
-                remaining_capacity = vehicle_capacity - current_weight - delivery_weight
-
-                if remaining_capacity >= 0 and remaining_capacity < best_remaining_capacity:
-                    best_remaining_capacity = remaining_capacity
-                    best_assignment = assignment
-
-            if best_assignment:
-                best_assignment["deliveries"].append(delivery)
-                best_assignment["total_weight"] += delivery_weight
-            else:
-                logger.warning(
-                    f"Could not assign delivery {delivery.get('_id', delivery.get('id'))} - no vehicle with sufficient capacity"
-                )
-
-        # Filter out assignments with no deliveries
-        return [a for a in assignments if a["deliveries"]]
+        algorithm = self._resolve_algorithm()
+        return algorithm.assign(deliveries, vehicles, drivers)
 
     def distribute_deliveries_by_region(
         self,
@@ -133,7 +102,7 @@ class CapacityOptimizer:
                 f"Total delivery weight ({total_weight}kg) exceeds total capacity ({total_capacity}kg)"
             )
 
-        # Use the main assignment algorithm
+        # Use the selected assignment algorithm
         return self.assign_deliveries_to_vehicles(region_deliveries, vehicles, drivers_in_region)
 
     def validate_capacity(

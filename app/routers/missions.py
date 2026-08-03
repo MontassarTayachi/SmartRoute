@@ -38,19 +38,110 @@ def generate_missions():
         raise APIException(500, f"Failed to generate missions: {str(e)}")
 
 
+@missions_bp.route("/test-generate", methods=["POST"])
+def test_generate_missions():
+    db = current_app.mongodb
+    mission_service = MissionService(db)
+
+    data = request.get_json(silent=True) or {}
+    target_date = None
+    if data.get("date"):
+        try:
+            target_date = datetime.fromisoformat(data["date"])
+        except ValueError:
+            return jsonify({"detail": "Date invalide."}), 400
+    if target_date is None:
+        target_date = datetime.utcnow()
+
+    try:
+        deliveries = mission_service._get_deliveries_for_date(target_date)
+        if not deliveries:
+            return jsonify({
+                "success": True,
+                "total_deliveries": 0,
+                "total_drivers_assigned": 0,
+                "total_distance": 0.0,
+                "total_assignments": 0,
+                "assignments": [],
+            }), 200
+
+        drivers = mission_service._get_available_drivers()
+        vehicles = mission_service._get_available_vehicles()
+        if not drivers or not vehicles:
+            return jsonify({
+                "success": True,
+                "total_deliveries": len(deliveries),
+                "total_drivers_assigned": 0,
+                "total_distance": 0.0,
+                "total_assignments": 0,
+                "assignments": [],
+                "message": "No available drivers or vehicles for simulation",
+            }), 200
+
+        clustering_service = mission_service.clustering_service or __import__("app.services.clustering_service", fromlist=["ClusteringService"]).ClusteringService(db=db, driver_count=len(drivers))
+        region_deliveries = clustering_service.cluster_deliveries(deliveries)
+        region_centers = clustering_service.get_region_centers()
+
+        region_drivers = mission_service.driver_assignment_service.assign_drivers_to_regions(drivers, region_centers)
+
+        assignments_summary = []
+        total_distance = 0.0
+        total_drivers_assigned = 0
+        total_deliveries_assigned = 0
+
+        for region_id, deliveries_in_region in region_deliveries.items():
+            drivers_in_region = region_drivers.get(region_id, [])
+            if not drivers_in_region:
+                continue
+
+            assignments = mission_service.capacity_optimizer.distribute_deliveries_by_region(
+                deliveries_in_region, drivers_in_region, vehicles
+            )
+            for assignment in assignments:
+                driver_id = assignment.get("driver_id")
+                vehicle_id = assignment.get("vehicle_id")
+                delivery_items = assignment.get("deliveries", [])
+                if not delivery_items:
+                    continue
+
+                route_result = mission_service.route_optimizer.optimize_mission_route(delivery_items)
+                total_distance += float(route_result.get("total_distance", 0.0) or 0.0)
+                total_drivers_assigned += 1
+                total_deliveries_assigned += len(delivery_items)
+
+                assignments_summary.append({
+                    "region_id": region_id,
+                    "driver_id": str(driver_id),
+                    "vehicle_id": str(vehicle_id),
+                    "delivery_count": len(delivery_items),
+                    "total_weight": assignment.get("total_weight", 0.0),
+                    "route_distance": route_result.get("total_distance", 0.0),
+                    "estimated_duration": route_result.get("estimated_duration", 0),
+                    "delivery_ids": [str(d.get("_id", d.get("id"))) for d in delivery_items],
+                })
+
+        return jsonify({
+            "success": True,
+            "target_date": target_date.isoformat(),
+            "total_deliveries": len(deliveries),
+            "total_drivers_assigned": total_drivers_assigned,
+            "total_distance": round(total_distance, 2),
+            "total_assignments": len(assignments_summary),
+            "assigned_deliveries": total_deliveries_assigned,
+            "assignments": assignments_summary,
+        }), 200
+    except Exception as e:
+        raise APIException(500, f"Failed to simulate mission generation: {str(e)}")
+
+
 @missions_bp.route("/today", methods=["GET"])
 def get_today_missions():
-    page = request.args.get("page", 1, type=int)
-    limit = request.args.get("limit", 10, type=int)
     db = current_app.mongodb
     mission_service = MissionService(db)
 
     try:
         missions = mission_service.get_missions_for_date(datetime.utcnow())
-        total = len(missions)
-        start_idx = (page - 1) * limit
-        paginated = missions[start_idx:start_idx + limit]
-        return jsonify({"items": paginated, "total": total, "page": page, "limit": limit}), 200
+        return jsonify({"items": missions}), 200
     except Exception as e:
         raise APIException(500, f"Failed to retrieve missions: {str(e)}")
 
@@ -113,8 +204,7 @@ def assign_deliveries():
         if not vehicles:
             raise APIException(400, "No available vehicles found")
 
-        n_clusters = max(1, min(5, len(drivers)))
-        clustering_service = ClusteringService(n_clusters=n_clusters)
+        clustering_service = ClusteringService(db=db, driver_count=len(drivers))
         region_deliveries = clustering_service.cluster_deliveries(deliveries)
         region_centers = clustering_service.get_region_centers()
 
@@ -123,7 +213,7 @@ def assign_deliveries():
             drivers, region_centers, region_deliveries
         )
 
-        capacity_optimizer = CapacityOptimizer()
+        capacity_optimizer = CapacityOptimizer(db)
         route_optimizer = RouteOptimizerService()
 
         all_assignments = []
@@ -207,7 +297,7 @@ def assign_deliveries():
             "assigned_deliveries": len(assigned_delivery_ids),
             "unassigned_deliveries": len(unassigned),
             "unassigned_delivery_ids": [str(did) for did in unassigned],
-            "n_clusters": n_clusters,
+            "n_clusters": clustering_service.n_clusters,
             "assignments": all_assignments,
         }), 200
 
