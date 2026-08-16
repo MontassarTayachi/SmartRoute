@@ -208,6 +208,34 @@ def update_delivery(db: Database, delivery_id: str, payload: DeliveryUpdate) -> 
     return _format_delivery(updated)
 
 
+def reschedule_delivery(db: Database, delivery_id: str, scheduled_at: datetime) -> dict:
+    delivery_oid = _to_object_id(delivery_id, field_name="livraison")
+
+    try:
+        delivery = db["deliveries"].find_one({"_id": delivery_oid})
+    except PyMongoError:
+        raise APIException(500, "Erreur base de donnees lors de la lecture de la livraison.")
+
+    if not delivery:
+        raise APIException(404, "Livraison introuvable.")
+
+    if delivery.get("status") in (DeliveryStatus.delivered.value, DeliveryStatus.cancelled.value):
+        raise APIException(409, "Impossible de modifier la date d'une livraison déjà effectuée ou annulée.")
+
+    try:
+        updated = db["deliveries"].find_one_and_update(
+            {"_id": delivery_oid},
+            {"$set": {"scheduled_at": scheduled_at, "updated_at": datetime.utcnow()}},
+            return_document=True,
+        )
+    except PyMongoError:
+        raise APIException(500, "Erreur base de donnees lors du report de la livraison.")
+
+    if not updated:
+        raise APIException(404, "Livraison introuvable.")
+    return _format_delivery(updated)
+
+
 def assign_delivery(db: Database, delivery_id: str, *, vehicle_id: str, driver_id: str) -> dict:
     delivery_oid = _to_object_id(delivery_id, field_name="livraison")
     vehicle_oid = _to_object_id(vehicle_id, field_name="vehicule")

@@ -23,6 +23,11 @@ class ClusteringService:
         self.db = db
         self.driver_count = driver_count
         self.n_clusters = self._resolve_n_clusters(n_clusters)
+        # A fresh KMeansClusterer is created per ClusteringService instance, and callers
+        # (MissionService.generate_missions_for_date, the /assign and /test-generate
+        # routes) all instantiate a new ClusteringService per request/date rather than
+        # sharing one. Do not change this to a shared/cached instance without also
+        # resetting KMeansClusterer.n_clusters between uses (see kmeans.py fit_predict).
         self.clusterer = KMeansClusterer(n_clusters=self.n_clusters)
 
     def _resolve_n_clusters(self, fallback_n_clusters: int) -> int:
@@ -42,7 +47,9 @@ class ClusteringService:
 
         return max(1, configured_n_clusters)
 
-    def cluster_deliveries(self, deliveries: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    def cluster_deliveries(
+        self, deliveries: list[dict[str, Any]]
+    ) -> tuple[dict[int, list[dict[str, Any]]], list[dict[str, Any]]]:
         """
         Cluster deliveries into geographic regions.
 
@@ -50,14 +57,22 @@ class ClusteringService:
             deliveries: List of delivery dictionaries with pickup/dropoff coordinates
 
         Returns:
-            Dictionary mapping region_id to list of deliveries in that region
+            Tuple of:
+            - Dictionary mapping region_id to list of deliveries in that region
+            - List of deliveries excluded from clustering because they had no valid
+              pickup/dropoff coordinates
         """
         if not deliveries:
             logger.warning("No deliveries provided for clustering")
-            return {}
+            return {}, []
 
-        # Calculate centroid for each delivery
+        # Calculate centroid for each delivery that has valid coordinates. Deliveries
+        # without valid coordinates are excluded from clustering entirely rather than
+        # approximated to (0.0, 0.0), which would otherwise create an artificial
+        # cluster around the geographic origin and waste a driver's route time.
         delivery_centroids = []
+        clusterable_deliveries = []
+        deliveries_without_coordinates = []
         for delivery in deliveries:
             pickup_lat = delivery.get("pickup_address_lat")
             pickup_lng = delivery.get("pickup_address_lng")
@@ -73,24 +88,35 @@ class ClusteringService:
                 centroid_lat = (pickup_lat + dropoff_lat) / 2
                 centroid_lng = (pickup_lng + dropoff_lng) / 2
                 delivery_centroids.append((centroid_lat, centroid_lng))
+                clusterable_deliveries.append(delivery)
             else:
-                logger.warning(f"Delivery {delivery.get('id')} missing coordinates")
-                delivery_centroids.append((0.0, 0.0))
+                logger.warning(
+                    f"Delivery {delivery.get('id')} excluded from clustering: "
+                    "missing pickup or dropoff coordinates"
+                )
+                deliveries_without_coordinates.append(delivery)
+
+        if not delivery_centroids:
+            logger.warning("No deliveries with valid coordinates to cluster")
+            return {}, deliveries_without_coordinates
 
         # Perform clustering
         labels = self.clusterer.fit_predict(delivery_centroids)
 
         # Group deliveries by region
         regions: dict[int, list[dict[str, Any]]] = {}
-        for delivery, label in zip(deliveries, labels):
+        for delivery, label in zip(clusterable_deliveries, labels):
             if label not in regions:
                 regions[label] = []
             regions[label].append(delivery)
 
         self._persist_region_geometry(delivery_centroids, labels)
 
-        logger.info(f"Clustered {len(deliveries)} deliveries into {len(regions)} regions")
-        return regions
+        logger.info(
+            f"Clustered {len(clusterable_deliveries)} deliveries into {len(regions)} regions "
+            f"({len(deliveries_without_coordinates)} excluded for missing coordinates)"
+        )
+        return regions, deliveries_without_coordinates
 
     def get_region_centers(self) -> list[tuple[float, float]]:
         """

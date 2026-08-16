@@ -57,6 +57,10 @@ class DeliveryStatusUpdateRequest(BaseModel):
     status: DeliveryStatus = Field(..., example=DeliveryStatus.in_progress)
 
 
+class DeliveryRescheduleRequest(BaseModel):
+    scheduled_at: datetime = Field(..., example="2026-07-09T10:30:00Z")
+
+
 class DeliveryResponse(BaseModel):
     id: str = Field(..., alias="_id")
     reference: str

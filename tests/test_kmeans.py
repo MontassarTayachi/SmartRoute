@@ -67,6 +67,35 @@ def test_kmeans_cluster_centers():
     assert all(len(center) == 2 for center in centers)
 
 
+def test_kmeans_n_clusters_reduction_does_not_persist_across_calls():
+    """A small batch must not permanently shrink n_clusters for a later, larger batch."""
+    clusterer = KMeansClusterer(n_clusters=5, random_state=42)
+
+    small_batch = [(48.8566, 2.3522), (48.8666, 2.3722)]
+    labels = clusterer.fit_predict(small_batch)
+    assert len(labels) == 2
+    assert clusterer.n_clusters == 5
+    assert clusterer.last_effective_n_clusters == 2
+
+    large_batch = [
+        (48.8566, 2.3522),
+        (48.8666, 2.3722),
+        (51.5074, -0.1278),
+        (51.5174, -0.1478),
+        (40.7128, -74.0060),
+        (40.7228, -74.0260),
+        (35.6895, 139.6917),
+        (35.6995, 139.7017),
+        (-33.8688, 151.2093),
+        (-33.8788, 151.2193),
+    ]
+    labels = clusterer.fit_predict(large_batch)
+
+    assert clusterer.n_clusters == 5
+    assert clusterer.last_effective_n_clusters == 5
+    assert len(set(labels)) == 5
+
+
 def test_kmeans_assign_to_nearest_cluster():
     """Test assigning new coordinates to nearest cluster."""
     clusterer = KMeansClusterer(n_clusters=2, random_state=42)

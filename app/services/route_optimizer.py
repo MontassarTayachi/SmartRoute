@@ -1,8 +1,7 @@
 import logging
 from typing import Any
 
-from app.algorithms.nearest_neighbor import NearestNeighborOptimizer
-from app.algorithms.route_refiner import RouteRefiner
+from app.algorithms.route_strategies import RouteOptimizationStrategy, SavingsRouteStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -11,54 +10,33 @@ logger = logging.getLogger(__name__)
 class RouteOptimizerService:
     """Service for optimizing delivery routes within missions."""
 
-    def __init__(self):
-        """Initialize route optimizer service."""
-        self.nn_optimizer = NearestNeighborOptimizer()
-        self.route_refiner = RouteRefiner(max_iterations=100)
+    def __init__(self, db=None):
+        """
+        Initialize route optimizer service.
 
-    @staticmethod
-    def _build_distance_matrix(
-        steps: list[dict[str, Any]],
-        start_location: tuple[float, float] | None = None,
-    ) -> list[list[float]]:
-        matrix_steps = []
-        if start_location is not None:
-            matrix_steps.append({"lat": start_location[0], "lng": start_location[1]})
-        matrix_steps.extend(steps)
+        Args:
+            db: Optional database handle used to resolve the admin-configured active
+                route strategy (mirrors CapacityOptimizer(db)). Without it, this
+                service always uses SavingsRouteStrategy.
+        """
+        self.db = db
 
-        matrix: list[list[float]] = []
-        for source in matrix_steps:
-            row = []
-            for target in matrix_steps:
-                row.append(
-                    NearestNeighborOptimizer.haversine_distance(
-                        source["lat"],
-                        source["lng"],
-                        target["lat"],
-                        target["lng"],
-                    )
-                )
-            matrix.append(row)
+    def resolve_strategy(self) -> RouteOptimizationStrategy:
+        """Resolve the strategy that would be used for the next optimize_mission_route()
+        call without an explicit override — public so callers (e.g. the
+        /test-generate route) can report which strategy will run before invoking it."""
+        if self.db is not None:
+            from app.services.optimization_settings_service import OptimizationSettingsService
 
-        return matrix
+            return OptimizationSettingsService(self.db).resolve_route_strategy()
 
-    @staticmethod
-    def _annotate_steps_for_refinement(
-        steps: list[dict[str, Any]],
-        start_location: tuple[float, float] | None = None,
-    ) -> list[dict[str, Any]]:
-        offset = 1 if start_location is not None else 0
-        annotated_steps = []
-        for index, step in enumerate(steps):
-            step_copy = step.copy()
-            step_copy["_matrix_index"] = index + offset
-            annotated_steps.append(step_copy)
-        return annotated_steps
+        return SavingsRouteStrategy()
 
     def optimize_mission_route(
         self,
         deliveries: list[dict[str, Any]],
         start_location: tuple[float, float] | None = None,
+        strategy: RouteOptimizationStrategy | None = None,
     ) -> dict[str, Any]:
         """
         Optimize the route for a mission's deliveries.
@@ -66,6 +44,9 @@ class RouteOptimizerService:
         Args:
             deliveries: List of delivery dictionaries with coordinates
             start_location: Optional starting (lat, lng) coordinate
+            strategy: Optional strategy override, bypassing the admin-configured
+                active one (used by POST /api/missions/test-generate to simulate a
+                specific strategy without changing what's active in the database)
 
         Returns:
             Dictionary with optimized steps, total distance, and estimated duration
@@ -111,56 +92,18 @@ class RouteOptimizerService:
                     }
                 )
 
-        # Optimize route using nearest neighbor
-        optimized_steps = self.nn_optimizer.optimize_route(steps, start_location)
-        before_refinement_distance = self.nn_optimizer.calculate_total_distance(
-            optimized_steps, start_location
-        )
-
-        distance_matrix = self._build_distance_matrix(optimized_steps, start_location)
-        refinement_input = self._annotate_steps_for_refinement(optimized_steps, start_location)
-        refined_steps = self.route_refiner.two_opt(refinement_input, distance_matrix)
-        refined_steps = self.route_refiner.or_opt(refined_steps, distance_matrix)
-        for step in refined_steps:
-            step.pop("_matrix_index", None)
-        after_refinement_distance = self.nn_optimizer.calculate_total_distance(
-            refined_steps, start_location
-        )
-
-        if after_refinement_distance + 1e-9 < before_refinement_distance:
-            logger.info(
-                "Route refinement improved distance from %.2fkm to %.2fkm (gain %.2fkm)",
-                before_refinement_distance,
-                after_refinement_distance,
-                before_refinement_distance - after_refinement_distance,
-            )
-        else:
-            logger.info(
-                "Route refinement completed with no distance gain (%.2fkm)",
-                after_refinement_distance,
-            )
-
-        # Calculate total distance
-        total_distance = after_refinement_distance
-
-        # Estimate duration (assuming average speed of 30 km/h in urban areas)
-        avg_speed_kmh = 30.0
-        estimated_duration_seconds = int((total_distance / avg_speed_kmh) * 3600)
-
-        # Add order to steps
-        for order, step in enumerate(refined_steps):
-            step["order"] = order
+        resolved_strategy = strategy if strategy is not None else self.resolve_strategy()
+        result = resolved_strategy.optimize(steps, start_location)
 
         logger.info(
-            f"Optimized route for {len(deliveries)} deliveries: "
-            f"{total_distance:.2f}km, {estimated_duration_seconds}s"
+            "Optimized route for %d deliveries using strategy '%s': %.2fkm, %ds",
+            len(deliveries),
+            resolved_strategy.strategy_name,
+            result["total_distance"],
+            result["estimated_duration"],
         )
 
-        return {
-            "steps": refined_steps,
-            "total_distance": total_distance,
-            "estimated_duration": estimated_duration_seconds,
-        }
+        return result
 
     def validate_route_constraints(
         self, steps: list[dict[str, Any]]

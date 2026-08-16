@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/v1/deliveries", tags=["deliveries"])
 @router.get("/", response_model=DeliveryListResponse, status_code=status.HTTP_200_OK)
 async def list_deliveries_route(
     status_filter: str | None = Query(None, alias="status"),
+    scheduled_at: str | None = Query(None, alias="scheduled_at"),
     date: str | None = None,
     page: int = 1,
     limit: int = 20,
@@ -37,7 +38,7 @@ async def list_deliveries_route(
         page=page,
         limit=limit,
         status_filter=status_filter,
-        date_filter=date,
+        date_filter=scheduled_at or date,
         paginate=paginate,
     )
 

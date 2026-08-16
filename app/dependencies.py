@@ -74,5 +74,18 @@ def parse_body(ModelClass):
     try:
         return ModelClass(**data)
     except ValidationError as exc:
-        raise APIException(422, str(exc.errors()))
+        # Keep `detail` a JSON array of {loc, msg, type} instead of str(exc.errors())
+        # (a Python repr string). The frontend's getApiErrorMessage()
+        # (src/utils/apiError.js) explicitly branches on Array.isArray(detail) to
+        # render a friendly message per field; a stringified repr defeats that
+        # branch and leaks raw Python syntax to the user.
+        errors = [
+            {
+                "loc": list(error.get("loc", ())),
+                "msg": error.get("msg", ""),
+                "type": error.get("type", ""),
+            }
+            for error in exc.errors()
+        ]
+        raise APIException(422, errors)
 

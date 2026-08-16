@@ -83,6 +83,62 @@ class DriverAssignmentService:
         logger.info(f"Assigned {len(drivers)} drivers to {len(region_assignments)} regions")
         return region_assignments
 
+    def redistribute_orphaned_region_deliveries(
+        self,
+        region_deliveries: dict[int, list[dict[str, Any]]],
+        region_drivers: dict[int, list[dict[str, Any]]],
+        region_centers: list[tuple[float, float]],
+    ) -> dict[int, list[dict[str, Any]]]:
+        """
+        Fold deliveries from regions with zero assigned drivers into the nearest
+        region that does have a driver, instead of dropping them.
+
+        Both assign_drivers_to_regions and optimize_driver_assignment put each
+        driver in at most one region, so whenever n_clusters exceeds the number
+        of drivers, some regions are guaranteed to end up with an empty driver
+        list. Callers used to just `continue` past those regions (see
+        MissionService._build_mission_drafts and the /assign route), which meant
+        raising the region count silently shrank the number of deliveries that
+        got assigned. Merging into the nearest served region keeps every
+        delivery covered without double-booking a driver across two separate
+        mission drafts for the same day (which assigning the same driver to
+        multiple regions directly would cause, since capacity is computed
+        independently per region).
+        """
+        driven_region_ids = [
+            region_id for region_id, drivers in region_drivers.items() if drivers
+        ]
+        if not driven_region_ids:
+            return region_deliveries
+
+        merged: dict[int, list[dict[str, Any]]] = {
+            region_id: list(deliveries)
+            for region_id, deliveries in region_deliveries.items()
+            if region_id in driven_region_ids
+        }
+
+        for region_id, deliveries in region_deliveries.items():
+            if region_id in driven_region_ids or not deliveries:
+                continue
+
+            center_lat, center_lng = region_centers[region_id]
+            nearest_driven_region = min(
+                driven_region_ids,
+                key=lambda candidate_id: self.haversine_distance(
+                    center_lat,
+                    center_lng,
+                    region_centers[candidate_id][0],
+                    region_centers[candidate_id][1],
+                ),
+            )
+            merged.setdefault(nearest_driven_region, []).extend(deliveries)
+            logger.info(
+                f"Region {region_id} had {len(deliveries)} deliveries but no driver; "
+                f"merged into region {nearest_driven_region}"
+            )
+
+        return merged
+
     def optimize_driver_assignment(
         self,
         drivers: list[dict[str, Any]],
@@ -91,6 +147,12 @@ class DriverAssignmentService:
     ) -> dict[int, list[dict[str, Any]]]:
         """
         Optimize driver assignment considering both distance and workload.
+
+        Used exclusively by the POST /api/missions/assign route (manual/on-demand
+        assignment), where prioritizing the busiest regions first is desirable when
+        drivers are scarce. The daily batch pipeline (MissionService.generate_missions_for_date)
+        intentionally uses the simpler assign_drivers_to_regions (nearest-region-only)
+        instead — see the comment in app/routers/missions.py's assign_deliveries route.
 
         Args:
             drivers: List of available drivers

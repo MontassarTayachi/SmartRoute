@@ -21,6 +21,9 @@ class KMeansClusterer:
         """
         self.n_clusters = n_clusters
         self.random_state = random_state
+        # Value actually used by the most recent fit_predict() call, which may be
+        # lower than self.n_clusters when there were fewer coordinates than clusters.
+        self.last_effective_n_clusters = n_clusters
         self.kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
 
     def fit_predict(self, coordinates: list[tuple[float, float]]) -> list[int]:
@@ -37,15 +40,22 @@ class KMeansClusterer:
             logger.warning("No coordinates provided for clustering")
             return []
 
+        # Use a local variable for the cluster count actually used in this fit so a
+        # small batch never permanently shrinks self.n_clusters for later calls on
+        # the same instance (e.g. a smaller region followed by a larger one).
+        effective_n_clusters = self.n_clusters
         if len(coordinates) < self.n_clusters:
+            effective_n_clusters = max(1, len(coordinates))
             logger.warning(
                 f"Number of coordinates ({len(coordinates)}) is less than "
-                f"number of clusters ({self.n_clusters}). Using {len(coordinates)} clusters."
+                f"number of clusters ({self.n_clusters}). Using {effective_n_clusters} clusters "
+                "for this call only."
             )
-            self.n_clusters = max(1, len(coordinates))
-            self.kmeans = KMeans(
-                n_clusters=self.n_clusters, random_state=self.random_state, n_init=10
-            )
+
+        self.last_effective_n_clusters = effective_n_clusters
+        self.kmeans = KMeans(
+            n_clusters=effective_n_clusters, random_state=self.random_state, n_init=10
+        )
 
         X = np.array(coordinates)
         labels = self.kmeans.fit_predict(X)

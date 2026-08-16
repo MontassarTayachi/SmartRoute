@@ -10,10 +10,29 @@ from app.algorithms.assignment_algorithms import (
     BalancedLoadAlgorithm,
     GreedyCapacityAlgorithm,
 )
+from app.algorithms.route_strategies import RouteOptimizationStrategy, SavingsRouteStrategy
 from app.core.exceptions import APIException
 
 
 logger = logging.getLogger(__name__)
+
+
+def build_route_strategy(strategy_name: str | None, parameters: dict[str, Any] | None = None) -> RouteOptimizationStrategy:
+    """
+    Map a strategy_name to a RouteOptimizationStrategy instance. Shared by
+    OptimizationSettingsService.resolve_route_strategy() (DB-configured active
+    strategy) and POST /api/missions/test-generate (per-request forced strategy),
+    so both stay in sync as new strategies are added.
+    """
+    if strategy_name == SavingsRouteStrategy.strategy_name:
+        return SavingsRouteStrategy(parameters)
+    if strategy_name == "ortools_cvrp":
+        from app.algorithms.ortools_strategy import ORToolsRouteStrategy
+
+        return ORToolsRouteStrategy(parameters)
+
+    logger.warning("Unknown route strategy %s. Falling back to Clarke & Wright savings.", strategy_name)
+    return SavingsRouteStrategy(parameters)
 
 
 def _normalize_object_id(value: Any | None) -> ObjectId | None:
@@ -42,7 +61,14 @@ class OptimizationSettingsService:
         mode: str,
         updated_by: Any | None,
     ) -> dict[str, Any]:
-        resolved_n_clusters = 5
+        existing = self.get_region_settings()
+        # Fall back to whatever n_clusters was already stored (or 5 if this is the
+        # very first save) rather than always hardcoding 5. Saving mode="auto"
+        # without an explicit n_clusters (RegionSettingsPanel disables and blanks
+        # that field in auto mode) used to silently reset any previously
+        # configured value back to 5 on every save.
+        default_n_clusters = int(existing.get("n_clusters", 5)) if existing else 5
+        resolved_n_clusters = default_n_clusters
         if n_clusters is not None:
             if isinstance(n_clusters, str):
                 cleaned_value = n_clusters.strip()
@@ -52,7 +78,7 @@ class OptimizationSettingsService:
                     except ValueError as exc:
                         raise APIException(400, "Le nombre de regions doit être un entier valide.") from exc
                 else:
-                    resolved_n_clusters = 5
+                    resolved_n_clusters = default_n_clusters
             else:
                 resolved_n_clusters = int(n_clusters)
 
@@ -71,10 +97,14 @@ class OptimizationSettingsService:
             "updated_at": now,
         }
 
-        existing = self.get_region_settings()
         if existing:
-            self.db.region_settings.update_one({"_id": existing["_id"]}, {"$set": payload})
-            payload["_id"] = existing["_id"]
+            existing_id = existing.get("_id")
+            if existing_id is not None:
+                self.db.region_settings.update_one({"_id": existing_id}, {"$set": payload})
+                payload["_id"] = existing_id
+            else:
+                self.db.region_settings.insert_one(payload)
+                payload["_id"] = None
         else:
             result = self.db.region_settings.insert_one(payload)
             payload["_id"] = result.inserted_id
@@ -126,7 +156,15 @@ class OptimizationSettingsService:
         return payload
 
     def list_region_geometry(self) -> list[dict[str, Any]]:
-        return list(self.db.region_geometry.find().sort("region_id", 1))
+        settings = self.get_region_settings()
+        max_region_id = None
+        if settings:
+            max_region_id = int(settings.get("n_clusters", 0))
+
+        if max_region_id is None or max_region_id <= 0:
+            return list(self.db.region_geometry.find().sort("region_id", 1))
+
+        return list(self.db.region_geometry.find({"region_id": {"$lt": max_region_id}}).sort("region_id", 1))
 
     def list_algorithms(self) -> list[dict[str, Any]]:
         return list(self.db.algorithm_settings.find().sort("algorithm_name", 1))
@@ -176,3 +214,56 @@ class OptimizationSettingsService:
 
         logger.warning("Unknown active algorithm %s. Falling back to greedy.", algorithm_name)
         return GreedyCapacityAlgorithm()
+
+    # -- Route ordering strategy settings -----------------------------------------
+    #
+    # Route strategies get their own `route_strategy_settings` collection rather
+    # than reusing `algorithm_settings` with an added "type" field. Reusing
+    # algorithm_settings would require every existing method above
+    # (list_algorithms, get_active_algorithm, activate_algorithm) to filter by type
+    # to avoid cross-contamination — e.g. activate_algorithm's
+    # `update_many({}, {"is_active": False})` would wrongly deactivate the active
+    # capacity algorithm when activating a route strategy, and vice versa. A
+    # dedicated collection with the exact same shape (strategy_name in place of
+    # algorithm_name; is_active/parameters/updated_by/updated_at unchanged) avoids
+    # that risk while keeping the same admin pattern.
+
+    def list_route_strategies(self) -> list[dict[str, Any]]:
+        return list(self.db.route_strategy_settings.find().sort("strategy_name", 1))
+
+    def get_active_route_strategy(self) -> dict[str, Any] | None:
+        return self.db.route_strategy_settings.find_one({"is_active": True})
+
+    def activate_route_strategy(
+        self,
+        *,
+        strategy_name: str,
+        parameters: dict[str, Any] | None,
+        updated_by: Any | None,
+    ) -> dict[str, Any]:
+        existing = self.db.route_strategy_settings.find_one({"strategy_name": strategy_name})
+        if not existing:
+            raise APIException(404, f"Stratégie de tournée {strategy_name} introuvable.")
+
+        now = datetime.utcnow()
+        normalized_updated_by = _normalize_object_id(updated_by)
+
+        self.db.route_strategy_settings.update_many({}, {"$set": {"is_active": False, "updated_at": now}})
+
+        payload = {
+            "is_active": True,
+            "parameters": parameters if parameters is not None else existing.get("parameters", {}),
+            "updated_by": normalized_updated_by,
+            "updated_at": now,
+        }
+        self.db.route_strategy_settings.update_one({"_id": existing["_id"]}, {"$set": payload})
+        existing.update(payload)
+        return existing
+
+    def resolve_route_strategy(self) -> RouteOptimizationStrategy:
+        active = self.get_active_route_strategy()
+        if not active:
+            logger.info("No active route strategy configured. Falling back to Clarke & Wright savings.")
+            return SavingsRouteStrategy()
+
+        return build_route_strategy(active.get("strategy_name"), active.get("parameters") or {})

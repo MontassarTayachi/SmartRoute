@@ -302,6 +302,41 @@ def _algorithm_settings_validator() -> dict:
     }
 
 
+def _mission_simulations_validator() -> dict:
+    # Deliberately loose: this collection stores POST /api/missions/test-generate
+    # output (mission drafts grouped by simulation_run_id), not real missions. It
+    # otherwise mirrors the shape produced by MissionService._create_mission_from_assignment.
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["simulation_run_id", "created_at"],
+            "properties": {
+                "simulation_run_id": {"bsonType": "string", "description": "Identifiant du run de simulation (regroupe les missions générées ensemble par un même appel test-generate)."},
+                "driver_id": {"bsonType": ["objectId", "string", "null"], "description": "Conducteur simulé."},
+                "vehicle_id": {"bsonType": ["objectId", "string", "null"], "description": "Véhicule simulé."},
+                "region_id": {"bsonType": ["int", "null"], "description": "Région simulée."},
+                "created_at": {"bsonType": "date", "description": "Date de création de la simulation."},
+            },
+        }
+    }
+
+
+def _route_strategy_settings_validator() -> dict:
+    return {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["strategy_name", "is_active", "parameters", "updated_at"],
+            "properties": {
+                "strategy_name": {"bsonType": "string", "description": "Nom de la stratégie d'ordonnancement de tournée."},
+                "is_active": {"bsonType": "bool", "description": "Indique si la stratégie est active."},
+                "parameters": {"bsonType": "object", "description": "Paramètres JSON spécifiques à la stratégie (ex. time_limit_seconds)."},
+                "updated_by": {"bsonType": ["objectId", "null"], "description": "Utilisateur ayant modifié la stratégie."},
+                "updated_at": {"bsonType": "date", "description": "Date de mise à jour de la stratégie."},
+            },
+        }
+    }
+
+
 def initialize_database(mongo_uri: str, db_name: str):
     """Initialize the smartRoute database with all collections, validators and indexes."""
     client = MongoClient(mongo_uri)
@@ -406,6 +441,22 @@ def initialize_database(mongo_uri: str, db_name: str):
                 ([("is_active", ASCENDING)], {"name": "idx_algorithm_active"}),
             ],
         ),
+        (
+            "route_strategy_settings",
+            _route_strategy_settings_validator(),
+            [
+                ([("strategy_name", ASCENDING)], {"name": "unique_route_strategy_name", "unique": True}),
+                ([("is_active", ASCENDING)], {"name": "idx_route_strategy_active"}),
+            ],
+        ),
+        (
+            "mission_simulations",
+            _mission_simulations_validator(),
+            [
+                ([("simulation_run_id", ASCENDING)], {"name": "idx_mission_simulations_run_id"}),
+                ([("created_at", ASCENDING)], {"name": "idx_mission_simulations_created_at"}),
+            ],
+        ),
     ]
 
     for name, validator, indexes in collections:
@@ -437,6 +488,24 @@ def initialize_database(mongo_uri: str, db_name: str):
                 "algorithm_name": "balanced_load",
                 "is_active": False,
                 "parameters": {},
+                "updated_by": None,
+                "updated_at": now,
+            },
+        ])
+
+    if db.route_strategy_settings.count_documents({}) == 0:
+        db.route_strategy_settings.insert_many([
+            {
+                "strategy_name": "clarke_wright",
+                "is_active": True,
+                "parameters": {},
+                "updated_by": None,
+                "updated_at": now,
+            },
+            {
+                "strategy_name": "ortools_cvrp",
+                "is_active": False,
+                "parameters": {"time_limit_seconds": 5},
                 "updated_by": None,
                 "updated_at": now,
             },

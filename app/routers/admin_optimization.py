@@ -1,7 +1,11 @@
 from flask import Blueprint, current_app, g, jsonify
 
 from app.dependencies import parse_body, require_admin
-from app.schemas.optimization import AlgorithmActivationRequest, RegionSettingsUpdateRequest
+from app.schemas.optimization import (
+    AlgorithmActivationRequest,
+    RegionSettingsUpdateRequest,
+    RouteStrategyActivationRequest,
+)
 from app.services.optimization_settings_service import OptimizationSettingsService
 
 admin_optimization_bp = Blueprint("admin_optimization", __name__, url_prefix="/api/admin/optimization")
@@ -44,6 +48,26 @@ def activate_algorithm():
     service = OptimizationSettingsService(current_app.mongodb)
     updated = service.activate_algorithm(
         algorithm_name=payload.algorithm_name,
+        parameters=payload.parameters,
+        updated_by=g.current_user.get("_id"),
+    )
+    return jsonify(updated), 200
+
+
+@admin_optimization_bp.route("/route-strategies", methods=["GET"])
+@require_admin
+def list_route_strategies():
+    service = OptimizationSettingsService(current_app.mongodb)
+    return jsonify({"items": service.list_route_strategies()}), 200
+
+
+@admin_optimization_bp.route("/route-strategies/activate", methods=["POST"])
+@require_admin
+def activate_route_strategy():
+    payload = parse_body(RouteStrategyActivationRequest)
+    service = OptimizationSettingsService(current_app.mongodb)
+    updated = service.activate_route_strategy(
+        strategy_name=payload.strategy_name,
         parameters=payload.parameters,
         updated_by=g.current_user.get("_id"),
     )
