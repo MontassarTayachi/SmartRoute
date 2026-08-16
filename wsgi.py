@@ -1,16 +1,17 @@
 """
-Production WSGI entrypoint (Render, or any gunicorn/eventlet host).
+Production WSGI entrypoint (Render, or any gunicorn/gevent host).
 
-eventlet.monkey_patch() must run before anything else imports socket/ssl-using
+gevent.monkey.patch_all() must run before anything else imports socket/ssl-using
 libraries (pymongo, requests, ...) - importing app.main here, before patching,
-would patch too late and lead to blocking I/O inside the eventlet workers.
+would patch too late and lead to blocking I/O inside the gevent workers.
 
-Start command: gunicorn --worker-class gunicorn.workers.geventlet.EventletWorker -w 1 wsgi:app
-(the fully-qualified class path avoids "Entry point 'eventlet' not found" errors that
-the short alias can hit on some gunicorn/Python version combinations — e.g. Python 3.14)
+Start command: gunicorn --worker-class gunicorn.workers.ggevent.GeventWorker -w 1 wsgi:app
+(the fully-qualified class path avoids entry-point resolution issues across
+gunicorn versions — gunicorn 26 dropped the "eventlet" worker entirely; "gevent"
+is still supported but the short alias has proven unreliable to resolve here)
 """
-import eventlet
-eventlet.monkey_patch()
+from gevent import monkey
+monkey.patch_all()
 
 from app.main import create_app_with_scheduler  # noqa: E402
 

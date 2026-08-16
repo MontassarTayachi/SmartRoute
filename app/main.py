@@ -109,7 +109,7 @@ def create_app() -> Flask:
 def create_app_with_scheduler() -> Flask:
     app = create_app()
 
-    socketio.init_app(app, cors_allowed_origins="*", async_mode="eventlet")
+    socketio.init_app(app, cors_allowed_origins="*", async_mode="gevent")
 
     # Register SocketIO tracking events
     from app.routers.tracking import register_tracking_socket
@@ -136,8 +136,8 @@ def create_app_with_scheduler() -> Flask:
 
 
 if __name__ == "__main__":
-    import eventlet
-    eventlet.monkey_patch()
+    from gevent import monkey
+    monkey.patch_all()
 
     app = create_app_with_scheduler()
     socketio.run(app, host="0.0.0.0", port=8000, debug=False)
