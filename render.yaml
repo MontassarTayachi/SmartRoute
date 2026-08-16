@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: smartroute-service
+    runtime: python
+    plan: starter
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet -w 1 wsgi:app
+    healthCheckPath: /api/missions/scheduler/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB
+        value: smartRoute
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_EXPIRE_MINUTES
+        value: "30"
+      - key: JWT_REFRESH_EXPIRE_DAYS
+        value: "7"
+      - key: BCRYPT_ROUNDS
+        value: "12"
