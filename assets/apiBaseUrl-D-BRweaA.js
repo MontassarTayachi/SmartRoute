@@ -1,0 +1,1 @@
+var e=()=>`https://smartrouteservice.onrender.com/api`;export{e as t};

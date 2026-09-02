@@ -1,0 +1,1 @@
+import{I as e}from"./index-DDtVGlwt.js";var t=()=>{let{pathname:t}=e(),[,n]=t.split(`/`);return[`admin`,`manager`,`driver`].includes(n)?`/${n}`:`/manager`};export{t};

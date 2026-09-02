@@ -1,0 +1,1 @@
+var e=(e,t=`Une erreur est survenue`)=>{let n=e?.response?.data,r=n?.detail;return typeof r==`string`?r:Array.isArray(r)?r.map(e=>e?.msg||e?.message||e?.loc?.join(`.`)||``).filter(Boolean).join(`, `):typeof n?.message==`string`?n.message:t};export{e as t};
