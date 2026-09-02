@@ -1,0 +1,1 @@
+import{I as e}from"./index-hJV_Y_yZ.js";var t=()=>{let{pathname:t}=e(),[,n]=t.split(`/`);return[`admin`,`manager`,`driver`].includes(n)?`/${n}`:`/manager`};export{t};
